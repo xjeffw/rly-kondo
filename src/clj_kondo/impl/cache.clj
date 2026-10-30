@@ -8,6 +8,7 @@
    [clojure.string :as str]
    [cognitect.transit :as transit])
   (:import [java.io RandomAccessFile]
+           [java.nio.file CopyOption Files StandardCopyOption]
            [java.util.concurrent.locks ReentrantLock]))
 
 (set! *warn-on-reflection* true)
@@ -147,6 +148,53 @@
           idacs)
         (update idacs :linted-namespaces conj ns-sym)))))
 
+(defn- flux-index-file ^java.io.File [cache-dir]
+  (cache-file cache-dir "flux" "index"))
+
+(defn read-flux-index
+  "The index of the Flux namespaces in the cache, see
+  clj-kondo.impl.flux/index-namespaces. A run reads it before it takes the lock of
+  the cache, to analyze its calls, so it is only ever replaced as a whole."
+  [cache-dir]
+  (when cache-dir
+    (let [file (flux-index-file cache-dir)]
+      (when (.exists file)
+        (with-open [is (io/input-stream file)]
+          (transit/read (transit/reader is :json)))))))
+
+(defn- write-flux-index! [cache-dir index]
+  (let [file (flux-index-file cache-dir)
+        temporary (io/file (str file ".tmp"))]
+    (io/make-parents file)
+    (with-open [os (no-flush-output-stream (io/output-stream temporary))]
+      (transit/write (transit/writer os :json) index))
+    (Files/move (.toPath temporary) (.toPath file)
+                (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                        StandardCopyOption/REPLACE_EXISTING]))))
+
+(defn- with-flux-index
+  "`idacs` with the index of the Flux namespaces: `cached`, with what this run
+  found, as far as that goes into the cache."
+  [idacs config-dir cached]
+  (let [index (flux/index-namespaces cached
+                                     (get-in idacs [:clj :defs])
+                                     #(not (skip-write? config-dir %)))]
+    (assoc idacs
+           :flux-index index
+           :flux-owners (flux/global-owners index)
+           :flux-trees (atom {})
+           :flux-reached (atom #{}))))
+
+(defn- load-used-globals
+  "Reads from the cache the namespaces of the globals that this run uses."
+  [idacs cache-dir]
+  (reduce #(load-when-missing %1 cache-dir :clj %2)
+          idacs
+          (into #{}
+                (comp (mapcat (:flux-owners idacs))
+                      (map first))
+                (:flux-used-names idacs))))
+
 (defn update-defs
   "Resolve types of defs. Optionally store to cache. Return defs with
   resolved types for linting.."
@@ -197,7 +245,17 @@
         idacs (cond-> idacs
                 cache-dir (flux/merge-cached-contributions
                            #(from-cache-1 cache-dir :clj %)))
+        flux? (some :flux? (vals (get-in idacs [:clj :defs])))
+        cached-flux-index (when flux? (read-flux-index cache-dir))
+        ;; a defining macro can be a global, and what it defines can be one
+        idacs (cond-> idacs
+                flux? (-> (with-flux-index config-dir cached-flux-index)
+                          (load-used-globals cache-dir)))
         idacs (flux/register-definitions idacs)
+        idacs (cond-> idacs
+                flux? (with-flux-index config-dir cached-flux-index))
+        _ (when (and flux? cache-dir (not= cached-flux-index (:flux-index idacs)))
+            (write-flux-index! cache-dir (:flux-index idacs)))
         idacs (reduce (fn [idacs lang]
                         (update-in idacs [lang :defs]
                                    (fn [defs]

@@ -703,7 +703,9 @@
              (identical? :cljs lang) (update :qualify-ns
                                              #(assoc % 'cljs.core 'cljs.core
                                                      'clojure.core 'cljs.core))
-             (:flux? ctx) (flux/with-implicit-refers filename))]
+             (:flux? ctx) (-> (flux/with-implicit-refers filename)
+                              (flux/with-dependencies (:top-ns ctx)
+                                (:required analyzed-require-clauses))))]
     (when (:analysis ctx)
       (doseq [[k v] imports]
         (java/reg-class-usage! ctx (str v "." k) nil (assoc (meta k) :import true)))
@@ -771,6 +773,8 @@
     (let [analyzed
           (analyze-require-clauses ctx ns-name [[require-node libspecs]])]
       (namespace/reg-required-namespaces! ctx ns-name analyzed)
+      (when (flux/top-level-require? ctx)
+        (namespace/reg-flux-dependencies! ctx ns-name (:required analyzed)))
       (when (:analysis ctx)
         (doseq [req (:required analyzed)]
           (let [{:keys [row col end-row end-col alias]} (meta req)

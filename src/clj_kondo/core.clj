@@ -199,6 +199,9 @@
                  ;; calls that define a var if what they call is a macro that
                  ;; says so, see clj-kondo.impl.flux/register-definitions
                  :flux-definition-candidates (atom [])
+                 ;; what a call of a global is analyzed as, see
+                 ;; clj-kondo.impl.flux/global-var
+                 :flux-global-vars (delay (core-impl/flux-global-vars cache-dir lint))
                  :analysis analysis
                  :cache-dir cache-dir
                  :used-namespaces used-nss
@@ -259,6 +262,7 @@
                     (l/lint-var-usage ctx idacs)
                     (l/lint-deferred-conditions! ctx idacs)
                     (l/lint-unused-namespaces! ctx idacs)
+                    (l/lint-flux-globals! ctx idacs)
                     (l/lint-unused-private-vars! ctx)
                     (l/lint-bindings! ctx)
                     (l/lint-unresolved-symbols! ctx)

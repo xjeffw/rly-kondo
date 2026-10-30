@@ -1,0 +1,61 @@
+(ns app.uses
+  (:require [lib.aliased :as-alias aliased]
+            [lib.middle :as middle]))
+
+(require 'lib.late)
+
+;; through a dependency, and through a dependency of that
+(defn direct [x]
+  (middle-fn x))
+
+(defn transitive [x]
+  (base-fn x)
+  (base-renamed x)
+  (base-macro x)
+  (base-declared x)
+  [base-value base-once base-state base-alias base-renamed-alias])
+
+;; through global/
+(defn qualified [x]
+  (global/middle-fn x)
+  (global/base-renamed x)
+  [global/base-value #'global/base-fn #'base-fn])
+
+;; a top level require counts
+(defn required-at-the-top [x]
+  (late-fn x))
+
+;; the arity of the var
+(defn wrong-arity []
+  (base-fn)
+  (global/base-fn))
+
+;; a var defined by a global macro
+(defbase defined-through-a-global 1)
+
+(defn uses-it []
+  defined-through-a-global)
+
+;; what the tree does not hold
+(defn outside [x]
+  (outside-fn x)
+  (global/outside-fn x)
+  (global/nowhere x)
+  (nowhere x))
+
+;; not dependencies: a nested require, an :as-alias, and what after! requires
+(do (require 'lib.nested)
+    (require 'flux.other-ns))
+
+(defn nested [x]
+  (nested-fn x)
+  (aliased-fn x))
+
+(after! [lib.used :as used]
+  (used/used-fn 1))
+
+(defn after-form [x]
+  (used-fn x))
+
+;; the names of a metadata map are not evaluated
+(def ^{:global app-renamed} renamed-here 1)

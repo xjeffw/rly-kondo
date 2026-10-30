@@ -18,6 +18,7 @@ languages are linted as clj-kondo lints them.
   definition has.
 - **Unknown library.** While `flux.core` or `flux.builtins` has not been linted, in this run
   or in one that cached it, nothing is reported about an unqualified name.
+- **Global vars.** See below.
 - **Qualified names.** A qualified name resolves in any namespace that has been linted, whether
   the file requires it or not, as Flux resolves it in any loaded namespace.
 - **Namespaces in several files.** A namespace can be continued in another file with `in-ns`,
@@ -42,6 +43,54 @@ languages are linted as clj-kondo lints them.
   its like change their collection in place, so their value can go unused. A file is named
   after its namespace as written, and a package keeps `P.tests.X` in `test/P/X.flux`. A
   `package.flux` that holds one map is data.
+
+## Global vars
+
+A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under its own name,
+`^{:global all-buffers}` under another one, and `false` not at all. Flux's manual has the page
+"Global Vars", and Flux's `plans/global-vars.org` the design. What flux-kondo does with them:
+
+- **Definitions.** The metadata is read from a name of the `def` family (the forms that are
+  analyzed as `def`, `defn` or `defmacro`, a `:lint-as` to one of them included), of `declare`,
+  and of the macros with `:definition-symbol`, which covers `defalias`. The symbol of
+  `^{:global name}` is not evaluated, so it is not linted as a usage. A var that registers
+  itself some other way, with `alter-meta!` at runtime, is not known.
+- **Dependencies.** A namespace's dependencies are what its `ns` form's `:require` and `:use`
+  name and what `require` and `use` forms directly at the top level of its file name. A libspec
+  with only `:as-alias` does not count, nor does a require in another form, a `do` included, nor
+  the libspec of `after!`: these are the forms that Flux's loader reads. Its tree is itself and
+  the trees of its dependencies.
+- **Resolution.** An unqualified name that is nothing else in the namespace, including what the
+  namespace refers, is looked up among the globals of its tree. So is `global/name`, and the
+  namespace `global` is never unresolved. A global's var is linted as any var is, for its arity
+  and the like, and a namespace sees its own globals once they are defined.
+- **Out of sight.** A name that a global of a namespace outside of the tree has is unresolved,
+  and the message says which namespace to require. While a namespace of the tree has not been
+  linted, in this run or in one that cached it, nothing is reported about the name.
+- **Calls.** A call of a global is analyzed as a call of its var: its hooks, `:lint-as` and
+  `:config-in-call` apply, by the var's name. So that this needs no earlier run, a run first
+  looks through the text of the Flux files it was given for such tags, and otherwise goes by the
+  cache.
+- **Usage.** A global counts as a use of each direct dependency that has its namespace in its
+  tree, so `:unused-namespace` does not report a require that exists for its globals.
+- **User namespaces.** `user`, which is where a file without an `ns` form is, sees every global
+  that is linted or cached, as Flux's `user` depends on the library and on every package. So does
+  every namespace of a run configured with `{:flux {:user-configuration true}}`, which the Flux
+  language server gives the files of the user's configuration. Their tree is known once
+  `flux.lib`'s is.
+
+Two linters are about globals, and are configured as any other:
+
+- `:flux/duplicate-global` (a warning): a definition that gives a global name that another var,
+  of this run or of the cache, registers. Flux refuses to load the second.
+- `:flux/shadowed-global` (off): a definition that hides a global its namespace sees. Nothing in
+  Flux warns about this, since the definition simply comes first.
+
+The cache keeps the dependencies and the global names with each namespace, and a digest of both
+for all namespaces in one file, `flux/index.transit.json`, so that resolving a name does not
+read every namespace of a tree. It is replaced as a whole, since a run reads it before it locks
+the cache. A cache written before flux-kondo knew globals has no such file, and is known not
+to hold a tree until it has been filled again.
 
 ## Configuration
 

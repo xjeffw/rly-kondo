@@ -703,25 +703,37 @@
         #_#__ (prn (keys (:defs (:clj idacs))))
         ;; in a Flux namespace, flux.core and flux.builtins take the place
         ;; of clojure.core, and an unqualified name is one the namespace
-        ;; defines or refers
+        ;; defines or refers, or a global it sees, as global/name is
+        flux-global? (and (:flux? caller-ns) (flux/global-usage? call))
         flux-unqualified? (and (:flux? caller-ns) (flux/unqualified-usage? call))
-        flux-var (when flux-unqualified?
-                   (flux/resolve-unqualified-var idacs call call-fn-name refer-alls))
-        called-fn (if flux-unqualified?
+        flux-var (cond flux-global?
+                       (flux/resolve-global-var idacs call call-fn-name)
+                       flux-unqualified?
+                       (flux/resolve-unqualified-var idacs call call-fn-name refer-alls))
+        called-fn (if (or flux-global? flux-unqualified?)
                     (when-not (identical? :unknown flux-var) flux-var)
                     (utils/resolve-call idacs call call-lang
                                         resolved-ns call-fn-name unresolved? refer-alls))
         called-fn (utils/prefer-comment-def call called-fn)
-        unresolved? (if flux-unqualified?
-                      (nil? flux-var)
-                      unresolved?)
+        unresolved? (cond flux-global? false
+                          flux-unqualified? (nil? flux-var)
+                          :else unresolved?)
+        linted-namespaces (cond-> linted-namespaces
+                            (and flux-global? (nil? flux-var)) (conj flux/global-ns))
+        call (cond-> call
+               (and (or flux-global? flux-unqualified?) (nil? flux-var))
+               (assoc :flux-hint (flux/invisible-global-hint idacs call call-fn-name)))
+        _ (when (:flux-global flux-var)
+            (doseq [dependency (flux/newly-reached-dependencies idacs caller-ns-sym (:ns flux-var))]
+              (namespace/reg-used-namespace! ctx caller-ns-sym dependency)))
         name-meta (meta call-fn-name)
         name-row (:row name-meta)
         name-col (:col name-meta)
         name-end-row (:end-row name-meta)
         name-end-col (:end-col name-meta)
         unresolved-var
-        (reg-unresolved-var-usage! ctx call call? called-fn linted-namespaces resolved-ns call-fn-name caller-ns-sym in-comment unresolved? row col end-row end-col name-row name-col name-end-row name-end-col)
+        (when-not (identical? :unknown flux-var)
+          (reg-unresolved-var-usage! ctx call call? called-fn linted-namespaces resolved-ns call-fn-name caller-ns-sym in-comment unresolved? row col end-row end-col name-row name-col name-end-row name-end-col))
         ;; we can determine if the call was made to another
         ;; file by looking at the base-lang (in case of
         ;; CLJS macro imports or the top-level namespace
@@ -1098,7 +1110,7 @@
          ctx
          {:type :unresolved-symbol
           :filename filename
-          :message (str "Unresolved symbol: " n)
+          :message (str "Unresolved symbol: " n (:flux-hint v))
           :row (:row v)
           :col (:col v)
           :end-row (:end-row v)
@@ -1122,7 +1134,7 @@
          ctx
          {:type :unresolved-var
           :filename filename
-          :message (str "Unresolved var: " n)
+          :message (str "Unresolved var: " n (:flux-hint v))
           :row (:row v)
           :col (:col v)
           :end-row (:end-row v)
@@ -1172,6 +1184,36 @@
         :end-col (:end-col m)
         :ns un
         :name (:name m)}))))
+
+(defn lint-flux-globals!
+  "Reports the Flux definitions that give a global name that another var
+  registers and, where that linter is on, those that shadow a global."
+  [ctx idacs]
+  (let [namespaces (filter :flux? (namespace/list-namespaces ctx))
+        configs (into {} (map (juxt :name :config)) namespaces)
+        var-str (fn [[ns-sym var-name]] (str "#'" ns-sym "/" var-name))
+        definitions (concat (mapcat flux/var-definitions namespaces)
+                            (:flux-macro-definitions idacs))
+        global-definitions (group-by :global (filter :global definitions))]
+    (doseq [{:keys [ns name global] :as definition} definitions
+            :let [config (or (get configs ns) (:config ctx))
+                  ctx (assoc ctx :config config :lang :clj :base-lang :clj)
+                  finding (select-keys definition [:filename :row :col :end-row :end-col])]]
+      (when global
+        (when-let [others (seq (flux/other-owners idacs (get global-definitions global) definition))]
+          (findings/reg-finding!
+           ctx
+           (assoc finding
+                  :type :flux/duplicate-global
+                  :message (format "Global %s is also registered as %s"
+                                   global (str/join ", " (map var-str others)))))))
+      (when-not (utils/linter-disabled? ctx :flux/shadowed-global)
+        (when-let [owner (flux/shadowed-global idacs definition config)]
+          (findings/reg-finding!
+           ctx
+           (assoc finding
+                  :type :flux/shadowed-global
+                  :message (format "%s shadows the global %s" name (var-str owner)))))))))
 
 (defn lint-class-usage [ctx idacs]
   (when-let [jm (:java-member-definitions idacs)]

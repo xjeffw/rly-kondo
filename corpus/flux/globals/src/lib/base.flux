@@ -1,0 +1,41 @@
+(ns lib.base)
+
+;; a global of each way to define a var
+(defn ^:global base-fn [x]
+  x)
+
+(defn ^{:global base-renamed} own-name [x]
+  x)
+
+(def ^:global base-value 1)
+
+(defmacro ^:global base-macro [x]
+  x)
+
+(declare ^:global base-declared)
+
+(defonce ^:global base-once 1)
+
+(defn- not-a-global [x]
+  x)
+
+(defn ^{:global false} neither [x]
+  (not-a-global x))
+
+;; a macro that defines a var, a var it defines, and an alias
+(defstate ^:global base-state 1)
+
+(defalias ^:global base-alias flux.other-ns/other-fn)
+
+(defalias ^{:global base-renamed-alias} other-alias flux.other-ns/other-fn)
+
+(defmacro ^:global ^{:definition-symbol {:path [0] :type :variable}} defbase [var value]
+  `(def ~var ~value))
+
+;; a namespace sees its own globals, under any name, once they are defined
+(defn own-use [x]
+  (base-renamed x)
+  (later-global x))
+
+(defn ^:global later-global [x]
+  x)

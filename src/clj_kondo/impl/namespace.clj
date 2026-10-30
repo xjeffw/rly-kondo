@@ -188,7 +188,8 @@
                     (:in-comment ctx) (assoc :in-comment true)
                     ;; Flux: a namespace continues in other files with in-ns, so
                     ;; its :filename is not always the file that defines the var
-                    (:flux? ctx) (assoc :defined-in filename))
+                    (:flux? ctx) (assoc :defined-in filename
+                                        :global (flux/global-name metadata var-sym)))
          path [base-lang lang ns-sym]
          temp? (:temp metadata)
          config (:config ctx)]
@@ -442,6 +443,13 @@
            (fn [ns]
              (merge-with into ns analyzed-require-clauses))))
   nil)
+
+(defn reg-flux-dependencies!
+  "Registers `required`, what a `require` or `use` form at the top level of a
+  Flux file requires, as dependencies of `ns-sym`."
+  [{:keys [base-lang lang namespaces top-ns]} ns-sym required]
+  (swap! namespaces update-in [base-lang lang ns-sym :flux-dependencies (or top-ns ns-sym)]
+         (fnil into #{}) (flux/dependencies required)))
 
 (defn reg-imports!
   [{:keys [base-lang lang namespaces] :as ctx} ns-sym imports]

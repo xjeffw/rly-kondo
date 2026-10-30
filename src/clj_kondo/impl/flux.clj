@@ -20,7 +20,13 @@
     package keeps the namespace `P.tests.X` in `test/P/X.flux`. A `package.flux`
     is the description of a package: data, not code.
   - A macro says which of its arguments names the var it defines, in its
-    `:definition-symbol` metadata."
+    `:definition-symbol` metadata.
+  - A var with `:global` metadata is a global: a namespace whose dependency tree
+    holds the namespace that registered it names it by its plain symbol, after
+    everything else that name could be, and by `global/name`. A namespace's tree
+    is what its `ns` form and the `require` and `use` forms at the top level of
+    its file name, transitively. `user` and the files of the user's configuration
+    see every global."
   {:no-doc true}
   (:require [clj-kondo.impl.var-info :as var-info]
             [clojure.string :as str]))
@@ -34,6 +40,20 @@
 (def implicit-namespaces
   "The namespaces every Flux namespace refers, in the order they are searched."
   [core-ns builtins-ns])
+
+(def global-ns
+  "The pseudo-namespace that every Flux namespace uses implicitly: `global/name`
+  names the global `name`. No file defines it."
+  'global)
+
+(def ^:private user-ns
+  "The namespace of interactive code, and of a file without an `ns` form."
+  'user)
+
+(def ^:private library-ns
+  "The namespace that requires the library, which every user namespace depends
+  on."
+  'flux.lib)
 
 (defn flux-file? [filename]
   (and (string? filename)
@@ -90,6 +110,26 @@
                                    :filename filename}])))
         implicit-namespaces))
 
+(defn dependencies
+  "The namespaces that a namespace depends on through the required namespaces
+  `required`, which clj-kondo keeps with what their libspecs say: all but those
+  that a libspec only gives an `:as-alias`."
+  [required]
+  (into #{}
+        (comp (remove #(-> % meta :alias meta :as-alias))
+              (map #(with-meta % nil)))
+        required))
+
+(defn top-level-require?
+  "True when `ctx` is that of a `require` or `use` form at the top level of a
+  Flux file, which is what the loader reads a namespace's dependencies from: a
+  form inside another form is not, nor is the libspec of `after!`."
+  [ctx]
+  (let [[[_ called] & enclosing] (:callstack ctx)]
+    (boolean (and (:flux? ctx)
+                  (not enclosing)
+                  (contains? '#{require use} called)))))
+
 (defn with-implicit-refers
   "Marks the namespace map `ns` as a Flux namespace and adds what it refers
   implicitly."
@@ -98,9 +138,17 @@
     (-> ns
         (assoc :flux? true)
         ;; always loaded, so their qualified names need no require
-        (update :qualify-ns #(reduce (fn [m n] (assoc m n n)) % implicit-namespaces))
+        (update :qualify-ns #(reduce (fn [m n] (assoc m n n))
+                                     %
+                                     (conj implicit-namespaces global-ns)))
         (update :refer-alls #(merge refer-alls %))
         (update :used-namespaces (fnil into #{}) (keys refer-alls)))))
+
+(defn with-dependencies
+  "Records in the namespace map `ns` the namespaces of `required`, what its `ns`
+  form requires in the file whose first namespace is `top-ns`."
+  [ns top-ns required]
+  (assoc-in ns [:flux-dependencies (or top-ns (:name ns))] (dependencies required)))
 
 (defn implicit-refer-ns
   "The namespace an unqualified, otherwise unresolved name is taken to come
@@ -238,6 +286,231 @@
         (concat (filter #(contains? refer-alls %) implicit-namespaces)
                 (remove (set implicit-namespaces) (keys refer-alls)))))
 
+;;;; global vars
+
+(defn global-name
+  "The global name that the metadata map `var-meta` gives the var `var-name`:
+  its own for `:global true`, the symbol of `:global name`, else nil."
+  [var-meta var-name]
+  (let [tag (:global var-meta)]
+    (cond (true? tag) var-name
+          (simple-symbol? tag) tag)))
+
+(defn without-global-name
+  "The metadata node `node` without the entry that holds a global's name, which
+  is a symbol that nothing evaluates."
+  [node]
+  (if (identical? :map (:tag node))
+    (assoc node :children
+           (into []
+                 (comp (partition-all 2)
+                       (remove #(identical? :global (:k (first %))))
+                       cat)
+                 (:children node)))
+    node))
+
+(defn global-usage?
+  "True when `usage` is of a name of the pseudo-namespace, `global/name`."
+  [usage]
+  (= global-ns (:resolved-ns usage)))
+
+(defn- index-entry
+  "What the index of the cached namespaces keeps of the namespace `ns-data`."
+  [ns-data]
+  {:dependencies (reduce into #{} (vals (:flux-dependencies ns-data)))
+   :globals (reduce-kv (fn [globals var-name var-info]
+                         (if-let [global (and (symbol? var-name)
+                                              (map? var-info)
+                                              (:global var-info))]
+                           (assoc globals global var-name)
+                           globals))
+                       {}
+                       ns-data)})
+
+(defn index-namespaces
+  "The index `index` with what this run found of the Flux namespaces of `defs`,
+  those that `cached?`, a function of a filename, says are kept in the cache.
+
+  The index maps each namespace to its direct dependencies and its globals, as
+  a map from global name to var name. A lint needs them for every namespace of
+  a tree, which can be most of the library, and the vars of one or two of those:
+  this is the part of the namespaces that the cache keeps apart, so that a lint
+  does not read them all."
+  [index defs cached?]
+  (reduce-kv (fn [index ns-sym ns-data]
+               (if (and (:flux? ns-data)
+                        (not (:source ns-data))
+                        (cached? (:filename ns-data)))
+                 (assoc index ns-sym (index-entry ns-data))
+                 index))
+             (or index {})
+             defs))
+
+(defn global-owners
+  "A map from each global name of `index` to the vars that register it, sorted,
+  each as a pair of its namespace and its name."
+  [index]
+  (let [owners (reduce-kv (fn [owners ns-sym {:keys [globals]}]
+                            (reduce-kv (fn [owners global var-name]
+                                         (update owners global (fnil conj []) [ns-sym var-name]))
+                                       owners
+                                       globals))
+                          {}
+                          index)]
+    (reduce-kv (fn [owners global vars]
+                 (assoc owners global (vec (sort vars))))
+               owners
+               owners)))
+
+(defn scan-global-vars
+  "The globals that the Flux source `text` defines in its namespace, as a map
+  from global name to [namespace var], or nil. This reads the text, in place of
+  analyzing it, so that what a call of a global is analyzed as is known before
+  any file of a run is analyzed: only the name of the var matters, for its hooks
+  and its :lint-as, and a tag in a comment names nothing that is called."
+  [text]
+  (when-let [tags (seq (re-seq #"\^(?::global|\{[^{}]*:global\s+(true|[^\s{}]+)[^{}]*\})\s+([^\s()\[\]{}]+)"
+                               text))]
+    (when-let [[_ ns-name] (re-find #"\(ns\s+([^\s()]+)" text)]
+      (into {}
+            (map (fn [[_ tag var-name]]
+                   [(symbol (if (or (nil? tag) (= "true" tag)) var-name tag))
+                    [(symbol ns-name) (symbol var-name)]]))
+            tags))))
+
+(defn global-vars
+  "The var of each global of `index`, as a map from global name to
+  [namespace var]."
+  [index]
+  (reduce-kv (fn [vars global owners]
+               (assoc vars global (first owners)))
+             {}
+             (global-owners index)))
+
+(defn global-var
+  "The var, as [namespace name], that a call of the name `full-name`, resolved
+  as `resolved-ns` and `unresolved?` say, is analyzed as when that is a global:
+  its hooks and its :lint-as apply. Whether the namespace of the call sees it
+  is decided once the cache is read."
+  [ctx full-name resolved-ns unresolved?]
+  (when (and (:flux? ctx)
+             (or unresolved? (= global-ns resolved-ns)))
+    (some-> (:flux-global-vars ctx)
+            deref
+            (get (symbol (name full-name))))))
+
+(defn- user-namespace?
+  "True for `user` and, with `config` saying so, for any namespace: a run for the
+  user's configuration has that in its configuration."
+  [ns-sym config]
+  (or (= user-ns ns-sym)
+      (true? (get-in config [:flux :user-configuration]))))
+
+(defn- walk-tree
+  "The namespaces that `roots` reach through the dependencies of `index`, and
+  whether the index has all of them."
+  [index roots]
+  (loop [seen (set roots)
+         todo (vec roots)
+         complete? true]
+    (if-let [ns-sym (peek todo)]
+      (if-let [entry (get index ns-sym)]
+        (let [new (remove seen (:dependencies entry))]
+          (recur (into seen new) (into (pop todo) new) complete?))
+        (recur seen (pop todo) false))
+      {:namespaces seen :complete? complete?})))
+
+(defn- namespace-tree
+  "What the namespace `ns-sym` sees of the cached namespaces, as {:namespaces
+  ... :complete? ...}: its tree and, when that holds a namespace the cache does
+  not have yet, that it is not complete. A user namespace depends on the library
+  and on every package, which is to say on all that is cached."
+  [{:keys [flux-index flux-trees]} ns-sym user?]
+  (let [key [ns-sym user?]]
+    (or (get @flux-trees key)
+        (let [tree (if user?
+                     (assoc (walk-tree flux-index [ns-sym library-ns])
+                            :namespaces (set (keys flux-index)))
+                     (walk-tree flux-index [ns-sym]))]
+          (swap! flux-trees assoc key tree)
+          tree))))
+
+(defn- visible-owner
+  "The var that registers the global `name-sym` among those that `tree` holds."
+  [idacs tree name-sym]
+  (some #(when (contains? (:namespaces tree) (first %)) %)
+        (get (:flux-owners idacs) name-sym)))
+
+(defn resolve-global-var
+  "The var that the global `name-sym` is for `usage`. Returns :unknown when no
+  global of that name is known to be visible but the tree of the namespace of
+  `usage` is not known yet, or the var's namespace is not cached."
+  [idacs usage name-sym]
+  (let [ns-sym (:ns usage)
+        tree (namespace-tree idacs ns-sym (user-namespace? ns-sym (:config usage)))
+        [owner-ns var-name] (visible-owner idacs tree name-sym)]
+    (cond
+      ;; a namespace sees its own globals as it sees its own vars: once they are defined
+      (= ns-sym owner-ns) (resolve-own-var idacs usage var-name)
+      owner-ns (or (some-> (get-in idacs [:clj :defs owner-ns var-name])
+                           (assoc :flux-global true))
+                   :unknown)
+      (not (:complete? tree)) :unknown)))
+
+(defn invisible-global-hint
+  "What to add to the message about `usage` of `name-sym`, which resolves to
+  nothing, when a global of that name exists that its namespace does not see."
+  [idacs usage name-sym]
+  (when-let [[owner-ns var-name] (first (get (:flux-owners idacs) name-sym))]
+    (when-not (= owner-ns (:ns usage))
+      (format ". It is the global #'%s/%s, registered by %s, which %s does not depend on: add it to the ns form's :require"
+              owner-ns var-name owner-ns (:ns usage)))))
+
+(defn newly-reached-dependencies
+  "The direct dependencies of `ns-sym` through which it sees a global of
+  `owner-ns`, the first time that a run asks: such a require is in use."
+  [{:keys [flux-index flux-reached] :as idacs} ns-sym owner-ns]
+  (let [reached [ns-sym owner-ns]]
+    (when-not (contains? @flux-reached reached)
+      (swap! flux-reached conj reached)
+      (filter #(contains? (:namespaces (namespace-tree idacs % false)) owner-ns)
+              (get-in flux-index [ns-sym :dependencies])))))
+
+(defn var-definitions
+  "What the analysis found the Flux namespace `ns` to define."
+  [ns]
+  (for [[var-name var-info] (:vars ns)
+        :when (not (or (:in-comment var-info) (:temp var-info)))]
+    {:ns (:name ns)
+     :name var-name
+     :global (:global var-info)
+     :filename (:defined-in var-info)
+     :row (or (:name-row var-info) (:row var-info))
+     :col (or (:name-col var-info) (:col var-info))
+     :end-row (or (:name-end-row var-info) (:end-row var-info))
+     :end-col (or (:name-end-col var-info) (:end-col var-info))}))
+
+(defn other-owners
+  "The vars other than the one `definition` defines that register the global
+  name it gives its var: those of the index, which holds one per namespace, and
+  those of `definitions`, what this run found."
+  [idacs definitions {:keys [ns name global]}]
+  (->> (filter #(= global (:global %)) definitions)
+       (map (juxt :ns :name))
+       (concat (get (:flux-owners idacs) global))
+       (remove #{[ns name]})
+       distinct
+       sort))
+
+(defn shadowed-global
+  "The var of the visible global that `definition`, a var of another name in
+  the eyes of the registry, hides in its namespace."
+  [idacs {:keys [ns name] :as _definition} config]
+  (let [tree (namespace-tree idacs ns (user-namespace? ns config))
+        owner (visible-owner idacs tree name)]
+    (when (and owner (not= [ns name] owner))
+      owner)))
+
 (def ^:private runtime-vars
   "The vars of flux.core that the runtime defines and no file declares."
   '#{*ns*})
@@ -256,6 +529,19 @@
       (and (:resolved-core? usage)
            (:simple? usage))))
 
+(defn used-names
+  "The names that the Flux namespaces `namespaces` use in a way a global could
+  stand for, and that the calls `candidates` make: the vars of those of them
+  that are globals have to be read from the cache."
+  [namespaces candidates]
+  (-> #{}
+      (into (comp (filter :flux?)
+                  (mapcat :used-vars)
+                  (filter #(or (unqualified-usage? %) (global-usage? %)))
+                  (map :name))
+            namespaces)
+      (into (map :name) candidates)))
+
 (defn resolve-unqualified-var
   "The var that `usage` of the unqualified `name-sym` refers to: one of its own
   namespace, else one of a namespace it refers, `refer-alls`. Returns :unknown
@@ -265,6 +551,7 @@
       (resolve-referred-var idacs usage name-sym refer-alls)
       (when (contains? runtime-vars name-sym)
         {:ns core-ns :name name-sym})
+      (resolve-global-var idacs usage name-sym)
       (when (or (contains? analysis-names name-sym)
                 (:clj-kondo.impl/generated (:expr usage))
                 (not (implicit-namespaces-known? idacs)))
@@ -291,19 +578,24 @@
 (defn merge-file-contributions
   "A Flux namespace can be defined in several files: the generated declarations
   of the builtins continue namespaces that Lisp files define. Returns
-  `ns-data`, what this run found in such a namespace, with the vars the cache
-  has of it from files this run did not analyze. `top-namespaces` names the
-  files of this run, each by the first namespace it declares."
+  `ns-data`, what this run found in such a namespace, with the vars and the
+  dependencies the cache has of it from files this run did not analyze.
+  `top-namespaces` names the files of this run, each by the first namespace it
+  declares."
   [cached ns-data top-namespaces]
-  (reduce-kv (fn [acc k v]
-               (if (and (symbol? k)
-                        (map? v)
-                        (not (contains? acc k))
-                        (not (contains? top-namespaces (:top-ns v))))
-                 (assoc acc k v)
-                 acc))
-             ns-data
-             cached))
+  (let [dependencies (into (or (:flux-dependencies ns-data) {})
+                           (remove #(contains? top-namespaces (key %)))
+                           (:flux-dependencies cached))]
+    (reduce-kv (fn [acc k v]
+                 (if (and (symbol? k)
+                          (map? v)
+                          (not (contains? acc k))
+                          (not (contains? top-namespaces (:top-ns v))))
+                   (assoc acc k v)
+                   acc))
+               (cond-> ns-data
+                 (seq dependencies) (assoc :flux-dependencies dependencies))
+               cached)))
 
 (defn merge-cached-contributions
   "Adds to each Flux namespace of this run the vars the cache has of it from
@@ -346,23 +638,26 @@
                (every? nat-int? (:path definition)))
       definition)))
 
-(defn- private-node?
-  "True when the metadata written on `node` says ^:private."
+(defn- node-metadata
+  "The metadata written on `node`, as a map."
   [node sexpr]
-  (boolean
-   (some (fn [meta-node]
-           (or (identical? :private (:k meta-node))
-               (when (identical? :map (:tag meta-node))
-                 (try (:private (sexpr meta-node))
-                      (catch Exception _ nil)))))
-         (:meta node))))
+  (into {}
+        (map (fn [meta-node]
+               (if-let [k (:k meta-node)]
+                 {k true}
+                 (when (identical? :map (:tag meta-node))
+                   (try (sexpr meta-node)
+                        (catch Exception _ nil))))))
+        (:meta node)))
 
 (defn- symbol-entry [node sexpr]
   (let [value (:value node)]
     (when (simple-symbol? value)
-      (assoc (select-keys (meta node) [:row :col :end-row :end-col])
-             :name value
-             :private (private-node? node sexpr)))))
+      (let [metadata (node-metadata node sexpr)]
+        (assoc (select-keys (meta node) [:row :col :end-row :end-col])
+               :name value
+               :private (boolean (:private metadata))
+               :global (global-name metadata value))))))
 
 (defn definition-candidate
   "What is kept of a call at the top level of a Flux file until the var it
@@ -389,7 +684,10 @@
   (or (get-in idacs [:clj :defs resolved-ns name])
       (when unresolved?
         (or (get-in idacs [:clj :defs ns name])
-            (some #(get-in idacs [:clj :defs % name]) implicit-namespaces)))))
+            (some #(get-in idacs [:clj :defs % name]) implicit-namespaces)))
+      (when (or unresolved? (= global-ns resolved-ns))
+        (when-let [[owner-ns var-name] (first (get (:flux-owners idacs) name))]
+          (get-in idacs [:clj :defs owner-ns var-name])))))
 
 (defn register-definitions
   "Adds to the namespaces of this run the vars that calls of macros with
@@ -403,15 +701,21 @@
               (if (and (map? entry)
                        (:name entry)
                        (not (get-in idacs var-path)))
-                (assoc-in idacs var-path
-                          (cond-> {:ns (:ns candidate)
-                                   :name (:name entry)
-                                   :row (:row candidate)
-                                   :col (:col candidate)
-                                   :top-ns (:top-ns candidate)}
-                            (:private entry) (assoc :private true)
-                            (identical? :macro type) (assoc :macro true)
-                            (identical? :function type) (assoc :type :fn)))
+                (-> idacs
+                    (assoc-in var-path
+                              (cond-> {:ns (:ns candidate)
+                                       :name (:name entry)
+                                       :row (:row candidate)
+                                       :col (:col candidate)
+                                       :top-ns (:top-ns candidate)}
+                                (:private entry) (assoc :private true)
+                                (:global entry) (assoc :global (:global entry))
+                                (identical? :macro type) (assoc :macro true)
+                                (identical? :function type) (assoc :type :fn)))
+                    (update :flux-macro-definitions (fnil conj [])
+                            (assoc (select-keys entry [:name :global :row :col :end-row :end-col])
+                                   :ns (:ns candidate)
+                                   :filename (:filename candidate))))
                 idacs)))
           idacs
           (:flux-definition-candidates idacs)))

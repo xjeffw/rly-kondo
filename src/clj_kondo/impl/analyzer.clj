@@ -1256,6 +1256,7 @@
                    :macro macro?
                    :private private?
                    :deprecated deprecated
+                   :global (when (:flux? ctx) (:global var-meta))
                    :definition-symbol (when (:flux? ctx)
                                         (flux/normalize-definition-symbol
                                          (:definition-symbol var-meta)))
@@ -2353,6 +2354,7 @@
                                  :name-end-row (:end-row var-name-meta)
                                  :name-end-col (:end-col var-name-meta)
                                  :declared true
+                                 :global (:global var-name-meta)
                                  :defined-by defined-by
                                  :defined-by->lint-as defined-by->lint-as)))))
 
@@ -3793,8 +3795,12 @@
              resolved-core? :resolved-core?
              :as _m}
             (resolve-name ctx true ns-name full-fn-name expr)
+            ;; a Flux global is called by a name of its own, and analyzed as its var
+            [hook-namespace hook-name] (or (flux/global-var ctx full-fn-name
+                                                            resolved-namespace unresolved?)
+                                           [resolved-namespace resolved-name])
             expr-meta (meta expr)
-            resolved-var-sym (symbol (str resolved-namespace) (str resolved-name))
+            resolved-var-sym (symbol (str hook-namespace) (str hook-name))
             cfg (when-let [in-call-cfg (:config-in-call config)]
                   (get in-call-cfg resolved-var-sym))
             cfg (when cfg
@@ -3841,9 +3847,9 @@
                     ;; multiple fns to target the same hook code
                     hook-fn
                     (let [visited (:visited expr)]
-                      (when-not (and visited (= visited [resolved-namespace resolved-name]))
+                      (when-not (and visited (= visited [hook-namespace hook-name]))
                         (or
-                         (hooks/hook-fn ctx config resolved-namespace resolved-name expr-meta)
+                         (hooks/hook-fn ctx config hook-namespace hook-name expr-meta)
                          (case [resolved-namespace resolved-name]
                            ([clojure.test testing] [cljs.test testing])
                            (when (:analysis-context ctx)
@@ -3897,7 +3903,7 @@
                                         (= full-fn-name (:value new-name-node))
                                         (= arg-count
                                            new-arg-count))
-                        expanded (assoc expanded :visited [resolved-namespace resolved-name])]
+                        expanded (assoc expanded :visited [hook-namespace hook-name])]
                     ;;;; This registers the original call when the new node does not
                     ;;;; refer to the same call, so we still get arity linting.
                     ;;;; Only arity: the original arguments are never analyzed in

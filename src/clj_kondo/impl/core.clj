@@ -5,8 +5,11 @@
    [babashka.fs :as fs]
    [clj-kondo.impl.analysis.java :as java]
    [clj-kondo.impl.analyzer :as ana]
+   [clj-kondo.impl.cache :as cache]
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.findings :as findings]
+   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.namespace :as namespace]
    [clj-kondo.impl.utils :as utils :refer [one-of print-err! map-vals assoc-some
                                            ->uri]]
    [clojure.edn :as edn]
@@ -619,6 +622,29 @@
     (when (:copy-configs ctx)
       (print-copied-configs (copied-config-paths ctx use-import-dir?) (:config-dir ctx)))))
 
+;;;; what a global var is, before a run has analyzed anything
+
+(defn- flux-sources
+  "The Flux files of `paths`, the arguments of a run, except for what is in a
+  jar: their names are all that says so."
+  [paths]
+  (for [path paths
+        path (str/split (str path) path-separator-pat)
+        ^java.io.File file (file-seq (io/file path))
+        :when (and (.isFile file)
+                   (flux/flux-file? (.getName file)))]
+    file))
+
+(defn flux-global-vars
+  "The var of each global that a call in a Flux file of this run can name: what
+  the cache says, overridden by what the files of `paths`, which the run is about
+  to read, say now. See clj-kondo.impl.flux/global-var."
+  [cache-dir paths]
+  (reduce (fn [vars file]
+            (into vars (flux/scan-global-vars (slurp file))))
+          (flux/global-vars (cache/read-flux-index cache-dir))
+          (flux-sources paths)))
+
 ;;;; index defs and calls by language and namespace
 
 (defn mmerge
@@ -633,8 +659,9 @@
    :name :ns :top-ns :imported-ns :imported-var
    :arities :type :class :methods
    :method-arities
-   ;; Flux: the argument that names the var a macro defines
-   :definition-symbol])
+   ;; Flux: the argument that names the var a macro defines, and the
+   ;; name of a var that is a global
+   :definition-symbol :global])
 
 (defn format-vars [vars]
   (map-vals (fn [md]
@@ -652,11 +679,12 @@
 
 (defn namespaces->indexed [namespaces]
   (when namespaces
-    (map-vals (fn [{:keys [filename vars proxied-namespaces deprecated flux?]}]
+    (map-vals (fn [{:keys [filename vars proxied-namespaces deprecated flux? flux-dependencies]}]
                 (some-> (assoc-some (format-vars vars)
                                     :proxied-namespaces proxied-namespaces
                                     :deprecated (deprecated-val deprecated)
-                                    :flux? flux?)
+                                    :flux? flux?
+                                    :flux-dependencies flux-dependencies)
                         (assoc :filename filename)))
               namespaces)))
 
@@ -711,7 +739,9 @@
     (-> (assoc indexed-defs
                :used-namespaces @(:used-namespaces ctx)
                :top-namespaces (some-> (:top-namespaces ctx) deref)
-               :flux-definition-candidates (some-> (:flux-definition-candidates ctx) deref))
+               :flux-definition-candidates (some-> (:flux-definition-candidates ctx) deref)
+               :flux-used-names (flux/used-names (namespace/list-namespaces ctx)
+                                                 (some-> (:flux-definition-candidates ctx) deref)))
         (assoc :java-member-definitions (java-members->indexed ctx))
         (assoc :java-class-usages @(:java-class-usages ctx)))))
 
