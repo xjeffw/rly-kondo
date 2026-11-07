@@ -1,7 +1,7 @@
 (ns clj-kondo.impl.cache
   {:no-doc true}
   (:require
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.types :as types]
    [clj-kondo.impl.utils :refer [one-of]]
    [clojure.java.io :as io]
@@ -148,22 +148,22 @@
           idacs)
         (update idacs :linted-namespaces conj ns-sym)))))
 
-(defn- flux-index-file ^java.io.File [cache-dir]
-  (cache-file cache-dir "flux" "index"))
+(defn- relay-index-file ^java.io.File [cache-dir]
+  (cache-file cache-dir "relay" "index"))
 
-(defn read-flux-index
-  "The index of the Flux namespaces in the cache, see
-  clj-kondo.impl.flux/index-namespaces. A run reads it before it takes the lock of
+(defn read-relay-index
+  "The index of the Relay namespaces in the cache, see
+  clj-kondo.impl.relay/index-namespaces. A run reads it before it takes the lock of
   the cache, to analyze its calls, so it is only ever replaced as a whole."
   [cache-dir]
   (when cache-dir
-    (let [file (flux-index-file cache-dir)]
+    (let [file (relay-index-file cache-dir)]
       (when (.exists file)
         (with-open [is (io/input-stream file)]
           (transit/read (transit/reader is :json)))))))
 
-(defn- write-flux-index! [cache-dir index]
-  (let [file (flux-index-file cache-dir)
+(defn- write-relay-index! [cache-dir index]
+  (let [file (relay-index-file cache-dir)
         temporary (io/file (str file ".tmp"))]
     (io/make-parents file)
     (with-open [os (no-flush-output-stream (io/output-stream temporary))]
@@ -172,18 +172,18 @@
                 (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
                                         StandardCopyOption/REPLACE_EXISTING]))))
 
-(defn- with-flux-index
-  "`idacs` with the index of the Flux namespaces: `cached`, with what this run
+(defn- with-relay-index
+  "`idacs` with the index of the Relay namespaces: `cached`, with what this run
   found, as far as that goes into the cache."
   [idacs config-dir cached]
-  (let [index (flux/index-namespaces cached
+  (let [index (relay/index-namespaces cached
                                      (get-in idacs [:clj :defs])
                                      #(not (skip-write? config-dir %)))]
     (assoc idacs
-           :flux-index index
-           :flux-owners (flux/global-owners index)
-           :flux-trees (atom {})
-           :flux-reached (atom #{}))))
+           :relay-index index
+           :relay-owners (relay/global-owners index)
+           :relay-trees (atom {})
+           :relay-reached (atom #{}))))
 
 (defn- load-used-globals
   "Reads from the cache the namespaces of the globals that this run uses."
@@ -191,9 +191,9 @@
   (reduce #(load-when-missing %1 cache-dir :clj %2)
           idacs
           (into #{}
-                (comp (mapcat (:flux-owners idacs))
+                (comp (mapcat (:relay-owners idacs))
                       (map first))
-                (:flux-used-names idacs))))
+                (:relay-used-names idacs))))
 
 (defn update-defs
   "Resolve types of defs. Optionally store to cache. Return defs with
@@ -240,22 +240,22 @@
                               :clj [:clj :cljc]))))
                 idacs
                 [:clj :cljs :cljc])
-        ;; Flux: a namespace of this run with what other files define of it,
+        ;; Relay: a namespace of this run with what other files define of it,
         ;; then the vars that calls of defining macros define
         idacs (cond-> idacs
-                cache-dir (flux/merge-cached-contributions
+                cache-dir (relay/merge-cached-contributions
                            #(from-cache-1 cache-dir :clj %)))
-        flux? (some :flux? (vals (get-in idacs [:clj :defs])))
-        cached-flux-index (when flux? (read-flux-index cache-dir))
+        relay? (some :relay? (vals (get-in idacs [:clj :defs])))
+        cached-relay-index (when relay? (read-relay-index cache-dir))
         ;; a defining macro can be a global, and what it defines can be one
         idacs (cond-> idacs
-                flux? (-> (with-flux-index config-dir cached-flux-index)
+                relay? (-> (with-relay-index config-dir cached-relay-index)
                           (load-used-globals cache-dir)))
-        idacs (flux/register-definitions idacs)
+        idacs (relay/register-definitions idacs)
         idacs (cond-> idacs
-                flux? (with-flux-index config-dir cached-flux-index))
-        _ (when (and flux? cache-dir (not= cached-flux-index (:flux-index idacs)))
-            (write-flux-index! cache-dir (:flux-index idacs)))
+                relay? (with-relay-index config-dir cached-relay-index))
+        _ (when (and relay? cache-dir (not= cached-relay-index (:relay-index idacs)))
+            (write-relay-index! cache-dir (:relay-index idacs)))
         idacs (reduce (fn [idacs lang]
                         (update-in idacs [lang :defs]
                                    (fn [defs]

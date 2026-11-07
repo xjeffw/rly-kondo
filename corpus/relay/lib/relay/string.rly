@@ -1,4 +1,4 @@
-(ns flux.string)
+(ns relay.string)
 
 (defn trim [s]
   (trimr s))

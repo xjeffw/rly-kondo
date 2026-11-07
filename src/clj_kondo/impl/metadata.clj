@@ -2,7 +2,7 @@
   {:no-doc true}
   (:require
    [clj-kondo.impl.analyzer.common :as common]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.linters.keys :as key-linter]
    [clj-kondo.impl.utils :as utils]))
 
@@ -53,7 +53,7 @@
                          'number {})))
                (assoc :arg-types (atom [])))
            analyzed-meta-list (cond->> meta-list
-                                (:flux? ctx) (map flux/without-global-name))
+                                (:relay? ctx) (map relay/without-global-name))
            ;; use dorun to force analysis, we don't use the end result!
            _ (if only-usage?
                (run! #(dorun (common/analyze-usages2 meta-ctx %))

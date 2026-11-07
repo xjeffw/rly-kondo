@@ -1,26 +1,26 @@
-# Flux Lisp
+# Relay Lisp
 
-flux-kondo lints Flux Lisp, the language of the [Flux](https://github.com/xjeffw/flux) editor,
-in files named `*.flux`. Flux Lisp is based on Clojure, and such a file is analyzed as Clojure
-except for what follows. `src/clj_kondo/impl/flux.clj` implements it, and
-`test/clj_kondo/flux_test.clj` with the files of `corpus/flux` tests it. Files of other
+rly-kondo lints Relay Lisp, the language of the [Relay](https://github.com/xjeffw/relay) editor,
+in files named `*.rly`. Relay Lisp is based on Clojure, and such a file is analyzed as Clojure
+except for what follows. `src/clj_kondo/impl/relay.clj` implements it, and
+`test/clj_kondo/relay_test.clj` with the files of `corpus/relay` tests it. Files of other
 languages are linted as clj-kondo lints them.
 
-## What a Flux file is linted as
+## What a Relay file is linted as
 
-- **Implicit refers.** Every namespace refers the public vars of `flux.core` and
-  `flux.builtins`, as if by `(:use flux.core flux.builtins)`, minus the names its
+- **Implicit refers.** Every namespace refers the public vars of `relay.core` and
+  `relay.builtins`, as if by `(:use relay.core relay.builtins)`, minus the names its
   `:refer-clojure` clause excludes. The two namespaces take the place of `clojure.core`: an
   unqualified name is a var of the namespace, of one it refers, or it is unresolved. A name
-  that only Clojure has, such as `println`, is unresolved. Flux declares its special forms as
-  vars of `flux.core`, so they are found the same way. A var the two namespaces have in common
-  with `clojure.core` is analyzed as the Clojure one, and its arity is the one its Flux
+  that only Clojure has, such as `println`, is unresolved. Relay declares its special forms as
+  vars of `relay.core`, so they are found the same way. A var the two namespaces have in common
+  with `clojure.core` is analyzed as the Clojure one, and its arity is the one its Relay
   definition has.
-- **Unknown library.** While `flux.core` or `flux.builtins` has not been linted, in this run
+- **Unknown library.** While `relay.core` or `relay.builtins` has not been linted, in this run
   or in one that cached it, nothing is reported about an unqualified name.
 - **Global vars.** See below.
 - **Qualified names.** A qualified name resolves in any namespace that has been linted, whether
-  the file requires it or not, as Flux resolves it in any loaded namespace.
+  the file requires it or not, as Relay resolves it in any loaded namespace.
 - **Namespaces in several files.** A namespace can be continued in another file with `in-ns`,
   as the generated declarations of the builtins continue the namespaces that Lisp files define.
   The cache keeps what each file contributes: linting one file replaces its part alone. A file
@@ -41,14 +41,14 @@ languages are linted as clj-kondo lints them.
 - **Smaller differences.** `^:private` does not keep another namespace from a var. A string
   keeps an escape the reader does not know. A vector takes an index and a default. `conj!` and
   its like change their collection in place, so their value can go unused. A file is named
-  after its namespace as written, and a package keeps `P.tests.X` in `test/P/X.flux`. A
-  `package.flux` that holds one map is data.
+  after its namespace as written, and a package keeps `P.tests.X` in `test/P/X.rly`. A
+  `package.rly` that holds one map is data.
 
 ## Global vars
 
 A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under its own name,
-`^{:global all-buffers}` under another one, and `false` not at all. Flux's manual has the page
-"Global Vars", and Flux's `plans/global-vars.org` the design. What flux-kondo does with them:
+`^{:global all-buffers}` under another one, and `false` not at all. Relay's manual has the page
+"Global Vars", and Relay's `plans/global-vars.org` the design. What rly-kondo does with them:
 
 - **Definitions.** The metadata is read from a name of the `def` family (the forms that are
   analyzed as `def`, `defn` or `defmacro`, a `:lint-as` to one of them included), of `declare`,
@@ -58,7 +58,7 @@ A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under
 - **Dependencies.** A namespace's dependencies are what its `ns` form's `:require` and `:use`
   name and what `require` and `use` forms directly at the top level of its file name. A libspec
   with only `:as-alias` does not count, nor does a require in another form, a `do` included, nor
-  the libspec of `after!`: these are the forms that Flux's loader reads. Its tree is itself and
+  the libspec of `after!`: these are the forms that Relay's loader reads. Its tree is itself and
   the trees of its dependencies.
 - **Resolution.** An unqualified name that is nothing else in the namespace, including what the
   namespace refers, is looked up among the globals of its tree. So is `global/name`, and the
@@ -69,32 +69,32 @@ A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under
   linted, in this run or in one that cached it, nothing is reported about the name.
 - **Calls.** A call of a global is analyzed as a call of its var: its hooks, `:lint-as` and
   `:config-in-call` apply, by the var's name. So that this needs no earlier run, a run first
-  looks through the text of the Flux files it was given for such tags, and otherwise goes by the
+  looks through the text of the Relay files it was given for such tags, and otherwise goes by the
   cache.
 - **Usage.** A global counts as a use of each direct dependency that has its namespace in its
   tree, so `:unused-namespace` does not report a require that exists for its globals.
 - **User namespaces.** `user`, which is where a file without an `ns` form is, sees every global
-  that is linted or cached, as Flux's `user` depends on the library and on every package. So does
-  every namespace of a run configured with `{:flux {:user-configuration true}}`, which the Flux
+  that is linted or cached, as Relay's `user` depends on the library and on every package. So does
+  every namespace of a run configured with `{:relay {:user-configuration true}}`, which the Relay
   language server gives the files of the user's configuration. Their tree is known once
-  `flux.lib`'s is.
+  `relay.lib`'s is.
 
 Two linters are about globals, and are configured as any other:
 
-- `:flux/duplicate-global` (a warning): a definition that gives a global name that another var,
-  of this run or of the cache, registers. Flux refuses to load the second.
-- `:flux/shadowed-global` (off): a definition that hides a global its namespace sees. Nothing in
-  Flux warns about this, since the definition simply comes first.
+- `:relay/duplicate-global` (a warning): a definition that gives a global name that another var,
+  of this run or of the cache, registers. Relay refuses to load the second.
+- `:relay/shadowed-global` (off): a definition that hides a global its namespace sees. Nothing in
+  Relay warns about this, since the definition simply comes first.
 
 The cache keeps the dependencies and the global names with each namespace, and a digest of both
-for all namespaces in one file, `flux/index.transit.json`, so that resolving a name does not
+for all namespaces in one file, `relay/index.transit.json`, so that resolving a name does not
 read every namespace of a tree. It is replaced as a whole, since a run reads it before it locks
-the cache. A cache written before flux-kondo knew globals has no such file, and is known not
+the cache. A cache written before rly-kondo knew globals has no such file, and is known not
 to hold a tree until it has been filled again.
 
 ## Configuration
 
 Configuration is clj-kondo's, in `.clj-kondo/config.edn`. In addition, the directory that the
-environment variable `FLUX_KONDO_LIBRARY_CONFIG_DIR` names is read as a configuration directory
-before the project's, which can therefore change what it says. The Flux language server sets
-it to the directory of the Flux library that holds the hooks for the library's macros.
+environment variable `RLY_KONDO_LIBRARY_CONFIG_DIR` names is read as a configuration directory
+before the project's, which can therefore change what it says. The Relay language server sets
+it to the directory of the Relay library that holds the hooks for the library's macros.

@@ -5,7 +5,7 @@
    [clj-kondo.impl.analysis :as analysis]
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.findings :as findings]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.namespace :as namespace]
    [clj-kondo.impl.types :as types]
    [clj-kondo.impl.types.utils :as tu]
@@ -178,7 +178,7 @@
                      (format "%s with single key" called-name)))))))
 
 (defn lint-specific-calls! [ctx call called-fn]
-  (let [called-fn (flux/as-clojure-var called-fn)
+  (let [called-fn (relay/as-clojure-var called-fn)
         called-ns (:ns called-fn)
         called-name (:name called-fn)
         config (:config call)
@@ -242,7 +242,7 @@
 
 (defn lint-arg-types! [ctx idacs call called-fn]
   (when-let [arg-types (:arg-types call)]
-    (let [called-fn (flux/as-clojure-var called-fn)
+    (let [called-fn (relay/as-clojure-var called-fn)
           arg-types @arg-types
           tags (map #(tu/resolve-arg-type idacs %) arg-types)]
       (types/lint-arg-types ctx called-fn arg-types tags call)
@@ -405,10 +405,10 @@
 
 (defn reg-unused-value!
   [ctx call called-fn config call-config filename row end-row col end-col]
-  (when-let [idx (when-not (and (flux/clojure-namesake (:ns called-fn) (:name called-fn))
-                                (contains? flux/in-place-vars (:name called-fn)))
+  (when-let [idx (when-not (and (relay/clojure-namesake (:ns called-fn) (:name called-fn))
+                                (contains? relay/in-place-vars (:name called-fn)))
                    (:idx call))]
-    (let [called-fn (flux/as-clojure-var called-fn)
+    (let [called-fn (relay/as-clojure-var called-fn)
           normalized-sym (symbol (let [cns (str (:ns called-fn))]
                                    (if (= "cljs.core" cns) "clojure.core" cns))
                                  (str (:name called-fn)))]
@@ -669,7 +669,7 @@
     (reg-deprecated-var! ctx call called-fn recursive? fn-sym fn-ns fn-name caller-ns-sym in-def filename row end-row col end-col)
     (reg-redundant-fn-wrapper! ctx call called-fn filename)
     (reg-redundant-call! ctx call called-fn call-config
-                         (if-let [n (flux/clojure-namesake resolved-ns call-fn-name)]
+                         (if-let [n (relay/clojure-namesake resolved-ns call-fn-name)]
                            (symbol "clojure.core" (str n))
                            fn-sym)
                          filename row end-row col end-col)
@@ -701,30 +701,30 @@
         end-col (:end-col call)
         ;; _ (prn :used (:used-namespaces idacs))
         #_#__ (prn (keys (:defs (:clj idacs))))
-        ;; in a Flux namespace, flux.core and flux.builtins take the place
+        ;; in a Relay namespace, relay.core and relay.builtins take the place
         ;; of clojure.core, and an unqualified name is one the namespace
         ;; defines or refers, or a global it sees, as global/name is
-        flux-global? (and (:flux? caller-ns) (flux/global-usage? call))
-        flux-unqualified? (and (:flux? caller-ns) (flux/unqualified-usage? call))
-        flux-var (cond flux-global?
-                       (flux/resolve-global-var idacs call call-fn-name)
-                       flux-unqualified?
-                       (flux/resolve-unqualified-var idacs call call-fn-name refer-alls))
-        called-fn (if (or flux-global? flux-unqualified?)
-                    (when-not (identical? :unknown flux-var) flux-var)
+        relay-global? (and (:relay? caller-ns) (relay/global-usage? call))
+        relay-unqualified? (and (:relay? caller-ns) (relay/unqualified-usage? call))
+        relay-var (cond relay-global?
+                       (relay/resolve-global-var idacs call call-fn-name)
+                       relay-unqualified?
+                       (relay/resolve-unqualified-var idacs call call-fn-name refer-alls))
+        called-fn (if (or relay-global? relay-unqualified?)
+                    (when-not (identical? :unknown relay-var) relay-var)
                     (utils/resolve-call idacs call call-lang
                                         resolved-ns call-fn-name unresolved? refer-alls))
         called-fn (utils/prefer-comment-def call called-fn)
-        unresolved? (cond flux-global? false
-                          flux-unqualified? (nil? flux-var)
+        unresolved? (cond relay-global? false
+                          relay-unqualified? (nil? relay-var)
                           :else unresolved?)
         linted-namespaces (cond-> linted-namespaces
-                            (and flux-global? (nil? flux-var)) (conj flux/global-ns))
+                            (and relay-global? (nil? relay-var)) (conj relay/global-ns))
         call (cond-> call
-               (and (or flux-global? flux-unqualified?) (nil? flux-var))
-               (assoc :flux-hint (flux/invisible-global-hint idacs call call-fn-name)))
-        _ (when (:flux-global flux-var)
-            (doseq [dependency (flux/newly-reached-dependencies idacs caller-ns-sym (:ns flux-var))]
+               (and (or relay-global? relay-unqualified?) (nil? relay-var))
+               (assoc :relay-hint (relay/invisible-global-hint idacs call call-fn-name)))
+        _ (when (:relay-global relay-var)
+            (doseq [dependency (relay/newly-reached-dependencies idacs caller-ns-sym (:ns relay-var))]
               (namespace/reg-used-namespace! ctx caller-ns-sym dependency)))
         name-meta (meta call-fn-name)
         name-row (:row name-meta)
@@ -732,7 +732,7 @@
         name-end-row (:end-row name-meta)
         name-end-col (:end-col name-meta)
         unresolved-var
-        (when-not (identical? :unknown flux-var)
+        (when-not (identical? :unknown relay-var)
           (reg-unresolved-var-usage! ctx call call? called-fn linted-namespaces resolved-ns call-fn-name caller-ns-sym in-comment unresolved? row col end-row end-col name-row name-col name-end-row name-end-col))
         ;; we can determine if the call was made to another
         ;; file by looking at the base-lang (in case of
@@ -930,7 +930,7 @@
                                     (map :name bindings)
                                     ;; the vars that calls of defining
                                     ;; macros define, and other files
-                                    (when (:flux? ns)
+                                    (when (:relay? ns)
                                       (filter symbol?
                                               (keys (get-in idacs [:clj :defs (:name ns)]))))))
                   ctx (assoc ctx :lang lang :base-lang base-lang)]
@@ -1110,7 +1110,7 @@
          ctx
          {:type :unresolved-symbol
           :filename filename
-          :message (str "Unresolved symbol: " n (:flux-hint v))
+          :message (str "Unresolved symbol: " n (:relay-hint v))
           :row (:row v)
           :col (:col v)
           :end-row (:end-row v)
@@ -1134,7 +1134,7 @@
          ctx
          {:type :unresolved-var
           :filename filename
-          :message (str "Unresolved var: " n (:flux-hint v))
+          :message (str "Unresolved var: " n (:relay-hint v))
           :row (:row v)
           :col (:col v)
           :end-row (:end-row v)
@@ -1166,8 +1166,8 @@
     (doseq [ns (namespace/list-namespaces ctx)
             :let [ctx (assoc ctx :lang (:lang ns) :base-lang (:base-lang ns))]
             [unresolved-ns uns] (:unresolved-namespaces ns)
-            ;; Flux resolves a qualified name in any loaded namespace
-            :when (not (and (:flux? ns)
+            ;; Relay resolves a qualified name in any loaded namespace
+            :when (not (and (:relay? ns)
                             (get-in idacs [:clj :defs (with-meta unresolved-ns nil)])))
             un (cond->> uns
                  hide-duplicates? (take 1))
@@ -1185,34 +1185,34 @@
         :ns un
         :name (:name m)}))))
 
-(defn lint-flux-globals!
-  "Reports the Flux definitions that give a global name that another var
+(defn lint-relay-globals!
+  "Reports the Relay definitions that give a global name that another var
   registers and, where that linter is on, those that shadow a global."
   [ctx idacs]
-  (let [namespaces (filter :flux? (namespace/list-namespaces ctx))
+  (let [namespaces (filter :relay? (namespace/list-namespaces ctx))
         configs (into {} (map (juxt :name :config)) namespaces)
         var-str (fn [[ns-sym var-name]] (str "#'" ns-sym "/" var-name))
-        definitions (concat (mapcat flux/var-definitions namespaces)
-                            (:flux-macro-definitions idacs))
+        definitions (concat (mapcat relay/var-definitions namespaces)
+                            (:relay-macro-definitions idacs))
         global-definitions (group-by :global (filter :global definitions))]
     (doseq [{:keys [ns name global] :as definition} definitions
             :let [config (or (get configs ns) (:config ctx))
                   ctx (assoc ctx :config config :lang :clj :base-lang :clj)
                   finding (select-keys definition [:filename :row :col :end-row :end-col])]]
       (when global
-        (when-let [others (seq (flux/other-owners idacs (get global-definitions global) definition))]
+        (when-let [others (seq (relay/other-owners idacs (get global-definitions global) definition))]
           (findings/reg-finding!
            ctx
            (assoc finding
-                  :type :flux/duplicate-global
+                  :type :relay/duplicate-global
                   :message (format "Global %s is also registered as %s"
                                    global (str/join ", " (map var-str others)))))))
-      (when-not (utils/linter-disabled? ctx :flux/shadowed-global)
-        (when-let [owner (flux/shadowed-global idacs definition config)]
+      (when-not (utils/linter-disabled? ctx :relay/shadowed-global)
+        (when-let [owner (relay/shadowed-global idacs definition config)]
           (findings/reg-finding!
            ctx
            (assoc finding
-                  :type :flux/shadowed-global
+                  :type :relay/shadowed-global
                   :message (format "%s shadows the global %s" name (var-str owner)))))))))
 
 (defn lint-class-usage [ctx idacs]

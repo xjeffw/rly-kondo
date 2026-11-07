@@ -8,7 +8,7 @@
    [clj-kondo.impl.cache :as cache]
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.findings :as findings]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.namespace :as namespace]
    [clj-kondo.impl.utils :as utils :refer [one-of print-err! map-vals assoc-some
                                            ->uri]]
@@ -182,9 +182,9 @@
                 config/default-config
                 (concat
                  [(when-not skip-home? (home-config))]
-                 ;; what the Flux library says of its macros, which a
+                 ;; what the Relay library says of its macros, which a
                  ;; project's own configuration adds to
-                 [(when-let [library-config-dir (System/getenv "FLUX_KONDO_LIBRARY_CONFIG_DIR")]
+                 [(when-let [library-config-dir (System/getenv "RLY_KONDO_LIBRARY_CONFIG_DIR")]
                     (process-cfg-dir library-config-dir))]
                  [(when cfg-dir (process-cfg-dir cfg-dir local-config))]
                  [(when-let [extra-config-dir (System/getenv "CLJ_KONDO_EXTRA_CONFIG_DIR")]
@@ -212,8 +212,8 @@
 (defn source-file? [filename]
   (when-let [[_ ext] (re-find #"\.(\w+)$" filename)]
     (one-of (keyword ext) [:clj :cljs :cljc :cljd :edn
-                           ;; Flux Lisp
-                           :flux
+                           ;; Relay Lisp
+                           :rly
                            ;; we needed to add this so .clj_kondo files will be
                            ;; copied from imported configs!
                            :clj_kondo])))
@@ -415,8 +415,8 @@
   (if-let [[_ ext] (re-find #"\.(\w+)$" file)]
     (let [k (keyword ext)]
       (or (get #{:clj :cljs :cljc :edn} k)
-          ;; Flux Lisp is analyzed as Clojure, see clj-kondo.impl.flux
-          (when (identical? :flux k) :clj)
+          ;; Relay Lisp is analyzed as Clojure, see clj-kondo.impl.relay
+          (when (identical? :rly k) :clj)
           default-language))
     default-language))
 
@@ -624,26 +624,26 @@
 
 ;;;; what a global var is, before a run has analyzed anything
 
-(defn- flux-sources
-  "The Flux files of `paths`, the arguments of a run, except for what is in a
+(defn- relay-sources
+  "The Relay files of `paths`, the arguments of a run, except for what is in a
   jar: their names are all that says so."
   [paths]
   (for [path paths
         path (str/split (str path) path-separator-pat)
         ^java.io.File file (file-seq (io/file path))
         :when (and (.isFile file)
-                   (flux/flux-file? (.getName file)))]
+                   (relay/relay-file? (.getName file)))]
     file))
 
-(defn flux-global-vars
-  "The var of each global that a call in a Flux file of this run can name: what
+(defn relay-global-vars
+  "The var of each global that a call in a Relay file of this run can name: what
   the cache says, overridden by what the files of `paths`, which the run is about
-  to read, say now. See clj-kondo.impl.flux/global-var."
+  to read, say now. See clj-kondo.impl.relay/global-var."
   [cache-dir paths]
   (reduce (fn [vars file]
-            (into vars (flux/scan-global-vars (slurp file))))
-          (flux/global-vars (cache/read-flux-index cache-dir))
-          (flux-sources paths)))
+            (into vars (relay/scan-global-vars (slurp file))))
+          (relay/global-vars (cache/read-relay-index cache-dir))
+          (relay-sources paths)))
 
 ;;;; index defs and calls by language and namespace
 
@@ -659,7 +659,7 @@
    :name :ns :top-ns :imported-ns :imported-var
    :arities :type :class :methods
    :method-arities
-   ;; Flux: the argument that names the var a macro defines, and the
+   ;; Relay: the argument that names the var a macro defines, and the
    ;; name of a var that is a global
    :definition-symbol :global])
 
@@ -679,12 +679,12 @@
 
 (defn namespaces->indexed [namespaces]
   (when namespaces
-    (map-vals (fn [{:keys [filename vars proxied-namespaces deprecated flux? flux-dependencies]}]
+    (map-vals (fn [{:keys [filename vars proxied-namespaces deprecated relay? relay-dependencies]}]
                 (some-> (assoc-some (format-vars vars)
                                     :proxied-namespaces proxied-namespaces
                                     :deprecated (deprecated-val deprecated)
-                                    :flux? flux?
-                                    :flux-dependencies flux-dependencies)
+                                    :relay? relay?
+                                    :relay-dependencies relay-dependencies)
                         (assoc :filename filename)))
               namespaces)))
 
@@ -739,9 +739,9 @@
     (-> (assoc indexed-defs
                :used-namespaces @(:used-namespaces ctx)
                :top-namespaces (some-> (:top-namespaces ctx) deref)
-               :flux-definition-candidates (some-> (:flux-definition-candidates ctx) deref)
-               :flux-used-names (flux/used-names (namespace/list-namespaces ctx)
-                                                 (some-> (:flux-definition-candidates ctx) deref)))
+               :relay-definition-candidates (some-> (:relay-definition-candidates ctx) deref)
+               :relay-used-names (relay/used-names (namespace/list-namespaces ctx)
+                                                 (some-> (:relay-definition-candidates ctx) deref)))
         (assoc :java-member-definitions (java-members->indexed ctx))
         (assoc :java-class-usages @(:java-class-usages ctx)))))
 

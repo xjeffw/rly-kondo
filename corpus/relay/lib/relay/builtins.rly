@@ -1,5 +1,5 @@
-;; The functions the runtime implements, declared as Flux generates them.
-(ns flux.builtins)
+;; The functions the runtime implements, declared as Relay generates them.
+(ns relay.builtins)
 
 (declare +)
 (declare alias-var!)

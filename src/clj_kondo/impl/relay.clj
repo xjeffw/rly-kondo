@@ -1,14 +1,14 @@
-(ns clj-kondo.impl.flux
-  "Flux Lisp, the language of `.flux` files: where it differs from Clojure.
+(ns clj-kondo.impl.relay
+  "Relay Lisp, the language of `.rly` files: where it differs from Clojure.
 
-  A Flux file is analyzed as Clojure (`:lang :clj`) with `:flux?` set in the
+  A Relay file is analyzed as Clojure (`:lang :clj`) with `:relay?` set in the
   ctx and in each namespace it declares. The differences:
 
-  - Every namespace refers the public vars of `flux.core` and `flux.builtins`,
-    as if by `(:use flux.core flux.builtins)`, minus the names its
+  - Every namespace refers the public vars of `relay.core` and `relay.builtins`,
+    as if by `(:use relay.core relay.builtins)`, minus the names its
     `:refer-clojure` clause excludes. These two namespaces take the place of
     `clojure.core`: an unqualified name is a var of them or it does not resolve.
-    Flux declares its special forms as vars of `flux.core` too.
+    Relay declares its special forms as vars of `relay.core` too.
   - A qualified name resolves in any loaded namespace, required or not.
   - `^:private` keeps a var out of what other namespaces refer implicitly, and
     nothing else.
@@ -17,7 +17,7 @@
   - A vector is called with an index and, optionally, a default.
   - conj! and its like change their collection in place.
   - A file is named after its namespace as written, hyphens included, and a
-    package keeps the namespace `P.tests.X` in `test/P/X.flux`. A `package.flux`
+    package keeps the namespace `P.tests.X` in `test/P/X.rly`. A `package.rly`
     is the description of a package: data, not code.
   - A macro says which of its arguments names the var it defines, in its
     `:definition-symbol` metadata.
@@ -33,16 +33,16 @@
 
 (set! *warn-on-reflection* true)
 
-(def core-ns 'flux.core)
+(def core-ns 'relay.core)
 
-(def builtins-ns 'flux.builtins)
+(def builtins-ns 'relay.builtins)
 
 (def implicit-namespaces
-  "The namespaces every Flux namespace refers, in the order they are searched."
+  "The namespaces every Relay namespace refers, in the order they are searched."
   [core-ns builtins-ns])
 
 (def global-ns
-  "The pseudo-namespace that every Flux namespace uses implicitly: `global/name`
+  "The pseudo-namespace that every Relay namespace uses implicitly: `global/name`
   names the global `name`. No file defines it."
   'global)
 
@@ -53,52 +53,52 @@
 (def ^:private library-ns
   "The namespace that requires the library, which every user namespace depends
   on."
-  'flux.lib)
+  'relay.lib)
 
-(defn flux-file? [filename]
+(defn relay-file? [filename]
   (and (string? filename)
-       (str/ends-with? filename ".flux")))
+       (str/ends-with? filename ".rly")))
 
 (defn package-description?
-  "True for the file that describes a Flux package, a `package.flux` that holds
+  "True for the file that describes a Relay package, a `package.rly` that holds
   one map: data, where a symbol names a namespace and not a var. `forms` are
   the parsed top level forms of the file."
   [filename forms]
   (and (string? filename)
-       (some? (re-find #"(^|[/\\\\])package\.flux$" filename))
+       (some? (re-find #"(^|[/\\\\])package\.rly$" filename))
        (= 1 (count forms))
        (identical? :map (:tag (first forms)))))
 
 (defn analysis-lang
   "The language to analyze the parsed file `parsed` as: `lang`, or EDN for the
-  description of a Flux package."
+  description of a Relay package."
   [ctx filename parsed lang]
-  (if (and (:flux? ctx)
+  (if (and (:relay? ctx)
            (package-description? filename (:children parsed)))
     :edn
     lang))
 
 (defn file-names-namespace?
   "True when the file at `path`, given without its extension and with dots for
-  its separators, is where Flux looks for the namespace `ns-name`: under the
+  its separators, is where Relay looks for the namespace `ns-name`: under the
   name of the namespace or, in a package, under `test` for a namespace of its
-  tests and under `src` for one that the `flux` prefix was added to."
+  tests and under `src` for one that the `relay` prefix was added to."
   [path ns-name]
   (let [parts (str/split (str ns-name) #"\.")
-        flux? (= "flux" (first parts))
+        relay? (= "relay" (first parts))
         suffix (fn [dir parts] (str dir "." (str/join "." parts)))]
     (boolean
      (some #(str/ends-with? path %)
            (cond-> [(str ns-name)]
              (and (<= 3 (count parts)) (= "tests" (second parts)))
              (conj (suffix "test" (cons (first parts) (drop 2 parts))))
-             (and flux? (<= 4 (count parts)) (= "tests" (second parts)))
+             (and relay? (<= 4 (count parts)) (= "tests" (second parts)))
              (conj (suffix "test" (drop 2 parts)))
-             (and flux? (<= 3 (count parts)))
+             (and relay? (<= 3 (count parts)))
              (conj (suffix "src" (rest parts))))))))
 
 (defn implicit-refer-alls
-  "The :refer-alls entries of the namespaces that the Flux namespace `ns-name`
+  "The :refer-alls entries of the namespaces that the Relay namespace `ns-name`
   refers without saying so."
   [ns-name excluded filename]
   (into {}
@@ -122,21 +122,21 @@
 
 (defn top-level-require?
   "True when `ctx` is that of a `require` or `use` form at the top level of a
-  Flux file, which is what the loader reads a namespace's dependencies from: a
+  Relay file, which is what the loader reads a namespace's dependencies from: a
   form inside another form is not, nor is the libspec of `after!`."
   [ctx]
   (let [[[_ called] & enclosing] (:callstack ctx)]
-    (boolean (and (:flux? ctx)
+    (boolean (and (:relay? ctx)
                   (not enclosing)
                   (contains? '#{require use} called)))))
 
 (defn with-implicit-refers
-  "Marks the namespace map `ns` as a Flux namespace and adds what it refers
+  "Marks the namespace map `ns` as a Relay namespace and adds what it refers
   implicitly."
   [ns filename]
   (let [refer-alls (implicit-refer-alls (:name ns) (:clojure-excluded ns) filename)]
     (-> ns
-        (assoc :flux? true)
+        (assoc :relay? true)
         ;; always loaded, so their qualified names need no require
         (update :qualify-ns #(reduce (fn [m n] (assoc m n n))
                                      %
@@ -148,14 +148,14 @@
   "Records in the namespace map `ns` the namespaces of `required`, what its `ns`
   form requires in the file whose first namespace is `top-ns`."
   [ns top-ns required]
-  (assoc-in ns [:flux-dependencies (or top-ns (:name ns))] (dependencies required)))
+  (assoc-in ns [:relay-dependencies (or top-ns (:name ns))] (dependencies required)))
 
 (defn implicit-refer-ns
   "The namespace an unqualified, otherwise unresolved name is taken to come
-  from in the Flux namespace `ns`. Whether a var of that name exists there, or
+  from in the Relay namespace `ns`. Whether a var of that name exists there, or
   in another referred namespace, is known once the cache is read."
   [ns name-sym]
-  (when (:flux? ns)
+  (when (:relay? ns)
     (some (fn [implicit-ns]
             (when-let [refer-all (get (:refer-alls ns) implicit-ns)]
               (when (and (:implicit refer-all)
@@ -163,10 +163,10 @@
                 implicit-ns)))
           implicit-namespaces)))
 
-;;;; names Flux shares with Clojure
+;;;; names Relay shares with Clojure
 
 (def ^:private untyped-vars
-  "Vars that take other arguments in Flux than their Clojure namesakes: throw
+  "Vars that take other arguments in Relay than their Clojure namesakes: throw
   takes any value."
   '#{throw})
 
@@ -179,7 +179,7 @@
 
 (defn clojure-namesake
   "The clojure.core name of the var `name-sym` of the namespace `ns-sym`, when
-  that is one of the namespaces Flux refers implicitly and Clojure has a var
+  that is one of the namespaces Relay refers implicitly and Clojure has a var
   of that name. Such a var is analyzed and linted as the Clojure one: it has
   the same syntax and, unless listed otherwise, takes the same arguments."
   [ns-sym name-sym]
@@ -189,7 +189,7 @@
     name-sym))
 
 (def ^:private special-forms-as
-  "Flux's own special forms, by the Clojure form each is analyzed as."
+  "Relay's own special forms, by the Clojure form each is analyzed as."
   '{with-read-lock let
     with-write-lock let
     set-local! set!
@@ -198,7 +198,7 @@
 (defn lint-as
   "The clojure.core var that a call of the var `name-sym` of `ns-sym` is
   analyzed as, as [ns name]: its namesake, or the form a special form of
-  Flux's own has the syntax of."
+  Relay's own has the syntax of."
   [ns-sym name-sym]
   (when-let [n (or (clojure-namesake ns-sym name-sym)
                    (when (= core-ns ns-sym)
@@ -240,7 +240,7 @@
 ;;;; resolving what a namespace refers implicitly
 
 (defn implicit-namespaces-known?
-  "True when the namespaces Flux refers implicitly were linted, in this run or
+  "True when the namespaces Relay refers implicitly were linted, in this run or
   in one that cached them. Only then is a name they lack known not to resolve."
   [idacs]
   (every? #(get-in idacs [:clj :defs %]) implicit-namespaces))
@@ -274,7 +274,7 @@
 
 (defn- resolve-referred-var
   "The var named `name-sym` among those the namespace of `usage` refers without
-  naming them: the public vars of the namespaces every Flux namespace refers,
+  naming them: the public vars of the namespaces every Relay namespace refers,
   then those of the ones it uses, minus what it excludes."
   [idacs usage name-sym refer-alls]
   (some (fn [referred-ns]
@@ -317,7 +317,7 @@
 (defn- index-entry
   "What the index of the cached namespaces keeps of the namespace `ns-data`."
   [ns-data]
-  {:dependencies (reduce into #{} (vals (:flux-dependencies ns-data)))
+  {:dependencies (reduce into #{} (vals (:relay-dependencies ns-data)))
    :globals (reduce-kv (fn [globals var-name var-info]
                          (if-let [global (and (symbol? var-name)
                                               (map? var-info)
@@ -328,7 +328,7 @@
                        ns-data)})
 
 (defn index-namespaces
-  "The index `index` with what this run found of the Flux namespaces of `defs`,
+  "The index `index` with what this run found of the Relay namespaces of `defs`,
   those that `cached?`, a function of a filename, says are kept in the cache.
 
   The index maps each namespace to its direct dependencies and its globals, as
@@ -338,7 +338,7 @@
   does not read them all."
   [index defs cached?]
   (reduce-kv (fn [index ns-sym ns-data]
-               (if (and (:flux? ns-data)
+               (if (and (:relay? ns-data)
                         (not (:source ns-data))
                         (cached? (:filename ns-data)))
                  (assoc index ns-sym (index-entry ns-data))
@@ -363,7 +363,7 @@
                owners)))
 
 (defn scan-global-vars
-  "The globals that the Flux source `text` defines in its namespace, as a map
+  "The globals that the Relay source `text` defines in its namespace, as a map
   from global name to [namespace var], or nil. This reads the text, in place of
   analyzing it, so that what a call of a global is analyzed as is known before
   any file of a run is analyzed: only the name of the var matters, for its hooks
@@ -393,9 +393,9 @@
   its hooks and its :lint-as apply. Whether the namespace of the call sees it
   is decided once the cache is read."
   [ctx full-name resolved-ns unresolved?]
-  (when (and (:flux? ctx)
+  (when (and (:relay? ctx)
              (or unresolved? (= global-ns resolved-ns)))
-    (some-> (:flux-global-vars ctx)
+    (some-> (:relay-global-vars ctx)
             deref
             (get (symbol (name full-name))))))
 
@@ -404,7 +404,7 @@
   user's configuration has that in its configuration."
   [ns-sym config]
   (or (= user-ns ns-sym)
-      (true? (get-in config [:flux :user-configuration]))))
+      (true? (get-in config [:relay :user-configuration]))))
 
 (defn- walk-tree
   "The namespaces that `roots` reach through the dependencies of `index`, and
@@ -425,21 +425,21 @@
   ... :complete? ...}: its tree and, when that holds a namespace the cache does
   not have yet, that it is not complete. A user namespace depends on the library
   and on every package, which is to say on all that is cached."
-  [{:keys [flux-index flux-trees]} ns-sym user?]
+  [{:keys [relay-index relay-trees]} ns-sym user?]
   (let [key [ns-sym user?]]
-    (or (get @flux-trees key)
+    (or (get @relay-trees key)
         (let [tree (if user?
-                     (assoc (walk-tree flux-index [ns-sym library-ns])
-                            :namespaces (set (keys flux-index)))
-                     (walk-tree flux-index [ns-sym]))]
-          (swap! flux-trees assoc key tree)
+                     (assoc (walk-tree relay-index [ns-sym library-ns])
+                            :namespaces (set (keys relay-index)))
+                     (walk-tree relay-index [ns-sym]))]
+          (swap! relay-trees assoc key tree)
           tree))))
 
 (defn- visible-owner
   "The var that registers the global `name-sym` among those that `tree` holds."
   [idacs tree name-sym]
   (some #(when (contains? (:namespaces tree) (first %)) %)
-        (get (:flux-owners idacs) name-sym)))
+        (get (:relay-owners idacs) name-sym)))
 
 (defn resolve-global-var
   "The var that the global `name-sym` is for `usage`. Returns :unknown when no
@@ -453,7 +453,7 @@
       ;; a namespace sees its own globals as it sees its own vars: once they are defined
       (= ns-sym owner-ns) (resolve-own-var idacs usage var-name)
       owner-ns (or (some-> (get-in idacs [:clj :defs owner-ns var-name])
-                           (assoc :flux-global true))
+                           (assoc :relay-global true))
                    :unknown)
       (not (:complete? tree)) :unknown)))
 
@@ -461,7 +461,7 @@
   "What to add to the message about `usage` of `name-sym`, which resolves to
   nothing, when a global of that name exists that its namespace does not see."
   [idacs usage name-sym]
-  (when-let [[owner-ns var-name] (first (get (:flux-owners idacs) name-sym))]
+  (when-let [[owner-ns var-name] (first (get (:relay-owners idacs) name-sym))]
     (when-not (= owner-ns (:ns usage))
       (format ". It is the global #'%s/%s, registered by %s, which %s does not depend on: add it to the ns form's :require"
               owner-ns var-name owner-ns (:ns usage)))))
@@ -469,15 +469,15 @@
 (defn newly-reached-dependencies
   "The direct dependencies of `ns-sym` through which it sees a global of
   `owner-ns`, the first time that a run asks: such a require is in use."
-  [{:keys [flux-index flux-reached] :as idacs} ns-sym owner-ns]
+  [{:keys [relay-index relay-reached] :as idacs} ns-sym owner-ns]
   (let [reached [ns-sym owner-ns]]
-    (when-not (contains? @flux-reached reached)
-      (swap! flux-reached conj reached)
+    (when-not (contains? @relay-reached reached)
+      (swap! relay-reached conj reached)
       (filter #(contains? (:namespaces (namespace-tree idacs % false)) owner-ns)
-              (get-in flux-index [ns-sym :dependencies])))))
+              (get-in relay-index [ns-sym :dependencies])))))
 
 (defn var-definitions
-  "What the analysis found the Flux namespace `ns` to define."
+  "What the analysis found the Relay namespace `ns` to define."
   [ns]
   (for [[var-name var-info] (:vars ns)
         :when (not (or (:in-comment var-info) (:temp var-info)))]
@@ -497,7 +497,7 @@
   [idacs definitions {:keys [ns name global]}]
   (->> (filter #(= global (:global %)) definitions)
        (map (juxt :ns :name))
-       (concat (get (:flux-owners idacs) global))
+       (concat (get (:relay-owners idacs) global))
        (remove #{[ns name]})
        distinct
        sort))
@@ -512,7 +512,7 @@
       owner)))
 
 (def ^:private runtime-vars
-  "The vars of flux.core that the runtime defines and no file declares."
+  "The vars of relay.core that the runtime defines and no file declares."
   '#{*ns*})
 
 (def ^:private analysis-names
@@ -520,9 +520,9 @@
   '#{fn*})
 
 (defn unqualified-usage?
-  "True when `usage`, made in a Flux namespace, is of an unqualified name the
+  "True when `usage`, made in a Relay namespace, is of an unqualified name the
   analysis could not find in that namespace: one it took for a clojure.core
-  var, or one it left unresolved. Flux finds such a name in the namespaces
+  var, or one it left unresolved. Relay finds such a name in the namespaces
   that the namespace refers, and nowhere else."
   [usage]
   (or (:unresolved? usage)
@@ -530,12 +530,12 @@
            (:simple? usage))))
 
 (defn used-names
-  "The names that the Flux namespaces `namespaces` use in a way a global could
+  "The names that the Relay namespaces `namespaces` use in a way a global could
   stand for, and that the calls `candidates` make: the vars of those of them
   that are globals have to be read from the cache."
   [namespaces candidates]
   (-> #{}
-      (into (comp (filter :flux?)
+      (into (comp (filter :relay?)
                   (mapcat :used-vars)
                   (filter #(or (unqualified-usage? %) (global-usage? %)))
                   (map :name))
@@ -576,16 +576,16 @@
         (update :var-counts select-keys (keys continued)))))
 
 (defn merge-file-contributions
-  "A Flux namespace can be defined in several files: the generated declarations
+  "A Relay namespace can be defined in several files: the generated declarations
   of the builtins continue namespaces that Lisp files define. Returns
   `ns-data`, what this run found in such a namespace, with the vars and the
   dependencies the cache has of it from files this run did not analyze.
   `top-namespaces` names the files of this run, each by the first namespace it
   declares."
   [cached ns-data top-namespaces]
-  (let [dependencies (into (or (:flux-dependencies ns-data) {})
+  (let [dependencies (into (or (:relay-dependencies ns-data) {})
                            (remove #(contains? top-namespaces (key %)))
-                           (:flux-dependencies cached))]
+                           (:relay-dependencies cached))]
     (reduce-kv (fn [acc k v]
                  (if (and (symbol? k)
                           (map? v)
@@ -594,18 +594,18 @@
                    (assoc acc k v)
                    acc))
                (cond-> ns-data
-                 (seq dependencies) (assoc :flux-dependencies dependencies))
+                 (seq dependencies) (assoc :relay-dependencies dependencies))
                cached)))
 
 (defn merge-cached-contributions
-  "Adds to each Flux namespace of this run the vars the cache has of it from
+  "Adds to each Relay namespace of this run the vars the cache has of it from
   other files. `read-cached` reads a namespace of the cache."
   [idacs read-cached]
   (let [top-namespaces (or (:top-namespaces idacs) #{})]
     (update-in idacs [:clj :defs]
                (fn [defs]
                  (reduce-kv (fn [defs ns-sym ns-data]
-                              (if (and (:flux? ns-data) (not (:source ns-data)))
+                              (if (and (:relay? ns-data) (not (:source ns-data)))
                                 (assoc defs ns-sym
                                        (merge-file-contributions (read-cached ns-sym)
                                                                  ns-data
@@ -660,7 +660,7 @@
                :global (global-name metadata value))))))
 
 (defn definition-candidate
-  "What is kept of a call at the top level of a Flux file until the var it
+  "What is kept of a call at the top level of a Relay file until the var it
   calls is known: should that be a macro with :definition-symbol metadata, the
   call defines a var. Of the arguments, the symbols at the paths such metadata
   uses are kept: an argument, or an element of an argument that is a vector
@@ -686,7 +686,7 @@
         (or (get-in idacs [:clj :defs ns name])
             (some #(get-in idacs [:clj :defs % name]) implicit-namespaces)))
       (when (or unresolved? (= global-ns resolved-ns))
-        (when-let [[owner-ns var-name] (first (get (:flux-owners idacs) name))]
+        (when-let [[owner-ns var-name] (first (get (:relay-owners idacs) name))]
           (get-in idacs [:clj :defs owner-ns var-name])))))
 
 (defn register-definitions
@@ -712,18 +712,18 @@
                                 (:global entry) (assoc :global (:global entry))
                                 (identical? :macro type) (assoc :macro true)
                                 (identical? :function type) (assoc :type :fn)))
-                    (update :flux-macro-definitions (fnil conj [])
+                    (update :relay-macro-definitions (fnil conj [])
                             (assoc (select-keys entry [:name :global :row :col :end-row :end-col])
                                    :ns (:ns candidate)
                                    :filename (:filename candidate))))
                 idacs)))
           idacs
-          (:flux-definition-candidates idacs)))
+          (:relay-definition-candidates idacs)))
 
 ;;;; strings
 
 (defn unescape-string
-  "The value of the text of a string literal as Flux reads it: the escapes
+  "The value of the text of a string literal as Relay reads it: the escapes
   for a newline, a tab, a return, a backslash and a double quote, and any other
   backslash as itself."
   [^String s]

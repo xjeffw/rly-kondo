@@ -15,7 +15,7 @@
 
 (def ^:dynamic *unescape*
   "When bound, the function that gives the value of the text of a string
-  literal, in place of Clojure's rules: Flux Lisp has its own."
+  literal, in place of Clojure's rules: Relay Lisp has its own."
   nil)
 
 (defn- maybe-unescape

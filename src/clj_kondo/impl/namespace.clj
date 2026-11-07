@@ -6,7 +6,7 @@
    [clj-kondo.impl.analysis.java :as java]
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.findings :as findings]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.utils :as utils
     :refer [deep-merge export-ns-sym linter-disabled? node->line one-of get-in]]
    [clj-kondo.impl.var-info :as var-info]
@@ -132,10 +132,10 @@
                                          (not (:synthetic-init prev))
                                          (:filename prev)
                                          (not= (:filename prev) new-filename))
-                                  (if (:flux? prev)
-                                    ;; Flux: what other files define of the
+                                  (if (:relay? prev)
+                                    ;; Relay: what other files define of the
                                     ;; namespace with in-ns is not reset
-                                    (flux/forget-declared-vars prev)
+                                    (relay/forget-declared-vars prev)
                                     (-> prev
                                         (assoc :vars nil)
                                         (dissoc :var-counts)))
@@ -186,10 +186,10 @@
                          :derived-location (:derived-location m))
          metadata (cond-> metadata
                     (:in-comment ctx) (assoc :in-comment true)
-                    ;; Flux: a namespace continues in other files with in-ns, so
+                    ;; Relay: a namespace continues in other files with in-ns, so
                     ;; its :filename is not always the file that defines the var
-                    (:flux? ctx) (assoc :defined-in filename
-                                        :global (flux/global-name metadata var-sym)))
+                    (:relay? ctx) (assoc :defined-in filename
+                                        :global (relay/global-name metadata var-sym)))
          path [base-lang lang ns-sym]
          temp? (:temp metadata)
          config (:config ctx)]
@@ -260,8 +260,8 @@
                  hard-def? (and (not (:declared metadata))
                                 (not (:in-comment metadata)))]
              (when (and (identical? :clj lang)
-                        ;; a Flux var is not compiled to a class file
-                        (not (:flux? ctx)))
+                        ;; a Relay var is not compiled to a class file
+                        (not (:relay? ctx)))
                (when-let [clashing-vars (->> (get classfiles classfile)
                                              (remove #{var-sym})
                                              (seq))]
@@ -274,9 +274,9 @@
              ;; declare is idempotent
              ;; (prn (:callstack ctx))
              (when (and top-level? hard-def?
-                        ;; Flux: a form that is evaluated later, as the body
+                        ;; Relay: a form that is evaluated later, as the body
                         ;; of after! is, replaces a definition on purpose
-                        (not (and (:flux? ctx) (flux/deferred-usage? ctx))))
+                        (not (and (:relay? ctx) (relay/deferred-usage? ctx))))
                (when-not (= 'clojure.core/definterface (:defined-by metadata))
                  (when-let [redefined-ns
                             (or (when-let [meta-v prev-var]
@@ -291,9 +291,9 @@
                                                 :clj 'clojure.core
                                                 :cljs 'cljs.core)]
                                   (when (and (not= ns-sym core-ns)
-                                             ;; a Flux namespace refers flux.core
-                                             ;; and flux.builtins in its place
-                                             (not (:flux? ctx))
+                                             ;; a Relay namespace refers relay.core
+                                             ;; and relay.builtins in its place
+                                             (not (:relay? ctx))
                                              (not (contains? (:clojure-excluded ns) var-sym))
                                              (var-info/core-sym? lang var-sym))
                                     core-ns)))]
@@ -444,12 +444,12 @@
              (merge-with into ns analyzed-require-clauses))))
   nil)
 
-(defn reg-flux-dependencies!
+(defn reg-relay-dependencies!
   "Registers `required`, what a `require` or `use` form at the top level of a
-  Flux file requires, as dependencies of `ns-sym`."
+  Relay file requires, as dependencies of `ns-sym`."
   [{:keys [base-lang lang namespaces top-ns]} ns-sym required]
-  (swap! namespaces update-in [base-lang lang ns-sym :flux-dependencies (or top-ns ns-sym)]
-         (fnil into #{}) (flux/dependencies required)))
+  (swap! namespaces update-in [base-lang lang ns-sym :relay-dependencies (or top-ns ns-sym)]
+         (fnil into #{}) (relay/dependencies required)))
 
 (defn reg-imports!
   [{:keys [base-lang lang namespaces] :as ctx} ns-sym imports]
@@ -557,9 +557,9 @@
                                          ;; we must include the filename here
                                          ;; see #73
                                          assoc :filename filename)]
-            ;; Flux resolves a qualified name in any loaded namespace: read
+            ;; Relay resolves a qualified name in any loaded namespace: read
             ;; this one from the cache to tell whether it is one
-            (when (and (:flux? ctx) (:used-namespaces ctx))
+            (when (and (:relay? ctx) (:used-namespaces ctx))
               (swap! (:used-namespaces ctx) update base-lang conj
                      (with-meta unresolved-ns nil)))
             (swap! namespaces update-in [base-lang lang ns-sym :unresolved-namespaces unresolved-ns]
@@ -950,7 +950,7 @@
                         (reg-used-alias! ctx ns-name name-sym)
                         {:ns ns*
                          :name name-sym}))
-                    (let [referred-all-ns (or (flux/implicit-refer-ns ns name-sym)
+                    (let [referred-all-ns (or (relay/implicit-refer-ns ns name-sym)
                                               (some (fn [[k {:keys [excluded]}]]
                                                       (when-not (contains? excluded name-sym)
                                                         k))

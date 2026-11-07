@@ -1,7 +1,7 @@
 ;; The special forms, and the functions the runtime implements in other namespaces.
-(ns flux.builtins-extra)
+(ns relay.builtins-extra)
 
-(in-ns 'flux.core)
+(in-ns 'relay.core)
 (def ^:special-form def nil)
 (def ^:special-form defn nil)
 (def ^:special-form defn- nil)
@@ -23,5 +23,5 @@
 (def ^:special-form with-read-lock nil)
 (def ^:special-form quote nil)
 
-(in-ns 'flux.string)
+(in-ns 'relay.string)
 (declare trimr)

@@ -29,10 +29,10 @@
               :redundant-let {:level :warning}
               :redundant-let-binding {:level :off}
               :cond-else {:level :warning}
-              ;; two vars of Flux Lisp that give one global name
-              :flux/duplicate-global {:level :warning}
-              ;; a definition in Flux Lisp that hides a global its namespace sees
-              :flux/shadowed-global {:level :off}
+              ;; two vars of Relay Lisp that give one global name
+              :relay/duplicate-global {:level :warning}
+              ;; a definition in Relay Lisp that hides a global its namespace sees
+              :relay/shadowed-global {:level :off}
               :syntax {:level :error}
               :file {:level :error}
               :missing-test-assertion {:level :warning}

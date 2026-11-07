@@ -23,7 +23,7 @@
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.docstring :as docstring]
    [clj-kondo.impl.findings :as findings]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.gen-macros :as gen-macros]
    [clj-kondo.impl.hooks :as hooks]
    [clj-kondo.impl.linters :as linters]
@@ -806,8 +806,8 @@
                                       (identical? :cljs lang)
                                       (assoc 'cljs.core 'cljs.core
                                              'clojure.core 'cljs.core)))))
-        ns (if (and ns (:flux? ctx))
-             (flux/with-implicit-refers ns (:filename ctx))
+        ns (if (and ns (:relay? ctx))
+             (relay/with-implicit-refers ns (:filename ctx))
              ns)]
     (namespace/reg-namespace! ctx ns)
     (analyze-children ctx (next children))
@@ -1256,9 +1256,9 @@
                    :macro macro?
                    :private private?
                    :deprecated deprecated
-                   :global (when (:flux? ctx) (:global var-meta))
-                   :definition-symbol (when (:flux? ctx)
-                                        (flux/normalize-definition-symbol
+                   :global (when (:relay? ctx) (:global var-meta))
+                   :definition-symbol (when (:relay? ctx)
+                                        (relay/normalize-definition-symbol
                                          (:definition-symbol var-meta)))
                    :defined-by defined-by
                    :defined-by->lint-as defined-by->lint-as
@@ -2213,7 +2213,7 @@
 (defn lint-vector-call! [ctx arg-count expr]
   (let [callstack (:callstack ctx)
         config (:config ctx)]
-    (when (if (:flux? ctx)
+    (when (if (:relay? ctx)
             ;; an index and, optionally, a default
             (not (<= 1 arg-count 2))
             (not= 1 arg-count))
@@ -2221,7 +2221,7 @@
         (findings/reg-finding!
           ctx
           (node->line (:filename ctx) expr :invalid-arity
-                      (if (:flux? ctx)
+                      (if (:relay? ctx)
                         (str "Vector can only be called with 1 or 2 args but was called with: "
                              arg-count)
                         (str "Vector can only be called with 1 arg but was called with: "
@@ -2361,8 +2361,8 @@
 (defn analyze-catch [ctx expr]
   (let [ctx (update ctx :callstack conj [nil 'catch])
         [class-expr binding-expr & exprs] (next (:children expr))
-        _ (if (:flux? ctx)
-            ;; the error type is a name Flux leaves unevaluated
+        _ (if (:relay? ctx)
+            ;; the error type is a name Relay leaves unevaluated
             (when-not (and (symbol? (:value class-expr)) binding-expr (seq exprs))
               (findings/reg-finding!
                ctx
@@ -3732,8 +3732,8 @@
     ;; catch-all
     (analyze-known-ns-call ctx expr children resolved-as-namespace resolved-as-name lint-as? resolved-namespace resolved-name defined-by defined-by->lint-as unresolved?)))
 
-(defn analyze-flux-deferred
-  "Flux's (after! libspec body...), whose body is evaluated once the namespace
+(defn analyze-relay-deferred
+  "Relay's (after! libspec body...), whose body is evaluated once the namespace
   of the libspec is loaded, with what the libspec requires of it, and
   (on-reload! body...), whose body is evaluated when the file is reloaded."
   [ctx expr form]
@@ -3795,8 +3795,8 @@
              resolved-core? :resolved-core?
              :as _m}
             (resolve-name ctx true ns-name full-fn-name expr)
-            ;; a Flux global is called by a name of its own, and analyzed as its var
-            [hook-namespace hook-name] (or (flux/global-var ctx full-fn-name
+            ;; a Relay global is called by a name of its own, and analyzed as its var
+            [hook-namespace hook-name] (or (relay/global-var ctx full-fn-name
                                                             resolved-namespace unresolved?)
                                            [resolved-namespace resolved-name])
             expr-meta (meta expr)
@@ -3836,10 +3836,10 @@
                          [[ns n]
                           (config/lint-as config resolved-var-sym)]
                           [ns n true])
-                        ;; flux.core defines the macros and declares the
-                        ;; special forms that Flux has in common with Clojure
-                        (when (:flux? ctx)
-                          (when-let [[ns n] (flux/lint-as resolved-namespace resolved-name)]
+                        ;; relay.core defines the macros and declares the
+                        ;; special forms that Relay has in common with Clojure
+                        (when (:relay? ctx)
+                          (when-let [[ns n] (relay/lint-as resolved-namespace resolved-name)]
                             [ns n true]))
                         [resolved-namespace resolved-name false])
                     ;; See #1170, we deliberaly use resolved and not resolved-as
@@ -3984,15 +3984,15 @@
                                                 (when (and resolved-as-name resolved-as-namespace)
                                                   (symbol (name resolved-as-namespace)
                                                           (name resolved-as-name))))
-                        _ (when (and (:flux? ctx)
+                        _ (when (and (:relay? ctx)
                                      top-level?
                                      (not lint-as?)
                                      (not (:in-comment ctx))
                                      (not (:quoted ctx))
                                      (not= 'clojure.core resolved-namespace)
                                      (symbol? resolved-name))
-                            (when-let [candidates (:flux-definition-candidates ctx)]
-                              (when-let [candidate (flux/definition-candidate
+                            (when-let [candidates (:relay-definition-candidates ctx)]
+                              (when-let [candidate (relay/definition-candidate
                                                     ctx expr
                                                     {:resolved-ns resolved-namespace
                                                      :name resolved-name
@@ -4000,9 +4000,9 @@
                                                     sexpr)]
                                 (swap! candidates conj candidate))))
                         analyzed
-                        (if-let [deferred (when (:flux? ctx)
-                                            (flux/deferred-form resolved-namespace resolved-name))]
-                          (analyze-flux-deferred ctx expr deferred)
+                        (if-let [deferred (when (:relay? ctx)
+                                            (relay/deferred-form resolved-namespace resolved-name))]
+                          (analyze-relay-deferred ctx expr deferred)
                           (analyze-known-call ctx expr children config ns-name lang base-lang resolved-as-clojure-var-name resolved-as-namespace resolved-as-name lint-as? resolved-namespace resolved-name top-level? defined-by defined-by->lint-as unresolved?))]
                     (if (= 'ns resolved-as-clojure-var-name)
                       analyzed
@@ -4753,7 +4753,7 @@
                      [:unresolved-symbol :unresolved-namespace :private-call])
                     ctx)
               line-length-findings (lint-line-length ctx config filename input)
-              lang (flux/analysis-lang ctx filename parsed lang)]
+              lang (relay/analysis-lang ctx filename parsed lang)]
           (case lang
             :cljc
             (doseq [lang features]
@@ -4837,10 +4837,10 @@
   "Analyzes input and returns analyzed defs, calls. Also invokes some
   linters and returns their findings."
   [ctx filename uri input lang dev?]
-  (if (flux/flux-file? filename)
-    ;; Flux Lisp, see clj-kondo.impl.flux
-    (binding [string-node/*unescape* flux/unescape-string]
-      (analyze-input* (assoc ctx :flux? true) filename uri input lang dev?))
+  (if (relay/relay-file? filename)
+    ;; Relay Lisp, see clj-kondo.impl.relay
+    (binding [string-node/*unescape* relay/unescape-string]
+      (analyze-input* (assoc ctx :relay? true) filename uri input lang dev?))
     (analyze-input* ctx filename uri input lang dev?)))
 
 ;;;; Scratch

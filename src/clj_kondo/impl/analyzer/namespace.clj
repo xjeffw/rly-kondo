@@ -10,7 +10,7 @@
    [clj-kondo.impl.config :as config]
    [clj-kondo.impl.docstring :as docstring]
    [clj-kondo.impl.findings :as findings]
-   [clj-kondo.impl.flux :as flux]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.metadata :as meta]
    [clj-kondo.impl.namespace :as namespace]
    [clj-kondo.impl.utils :as utils
@@ -594,8 +594,8 @@
                                     (.replace "\\" "."))
                   munged-ns (str (namespace-munge ns-name))]
               (when (and filename*
-                         (not (if (:flux? ctx)
-                                (flux/file-names-namespace? filename* ns-name)
+                         (not (if (:relay? ctx)
+                                (relay/file-names-namespace? filename* ns-name)
                                 (str/ends-with? filename* munged-ns))))
                 (when-not (some (fn [m]
                                   (and (identical? :namespace-name-mismatch (:type m))
@@ -672,9 +672,9 @@
                                          (zipmap only only))))]
             {:referred-globals refer-globals}))
         _ (when (and (seq (:clojure-excluded refer-clj))
-                     ;; a Flux namespace excludes vars of flux.core and
-                     ;; flux.builtins, which are known once the cache is read
-                     (not (:flux? ctx)))
+                     ;; a Relay namespace excludes vars of relay.core and
+                     ;; relay.builtins, which are known once the cache is read
+                     (not (:relay? ctx)))
             (lint-refer-clojure-vars ctx (:clojure-excluded refer-clj)))
         gen-class? (some #(= :gen-class (some-> % :children first :k)) clauses)
         leftovers (for [clause clauses
@@ -703,8 +703,8 @@
              (identical? :cljs lang) (update :qualify-ns
                                              #(assoc % 'cljs.core 'cljs.core
                                                      'clojure.core 'cljs.core))
-             (:flux? ctx) (-> (flux/with-implicit-refers filename)
-                              (flux/with-dependencies (:top-ns ctx)
+             (:relay? ctx) (-> (relay/with-implicit-refers filename)
+                              (relay/with-dependencies (:top-ns ctx)
                                 (:required analyzed-require-clauses))))]
     (when (:analysis ctx)
       (doseq [[k v] imports]
@@ -773,8 +773,8 @@
     (let [analyzed
           (analyze-require-clauses ctx ns-name [[require-node libspecs]])]
       (namespace/reg-required-namespaces! ctx ns-name analyzed)
-      (when (flux/top-level-require? ctx)
-        (namespace/reg-flux-dependencies! ctx ns-name (:required analyzed)))
+      (when (relay/top-level-require? ctx)
+        (namespace/reg-relay-dependencies! ctx ns-name (:required analyzed)))
       (when (:analysis ctx)
         (doseq [req (:required analyzed)]
           (let [{:keys [row col end-row end-col alias]} (meta req)

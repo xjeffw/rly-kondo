@@ -25,9 +25,9 @@
 ;; a macro that defines a var, a var it defines, and an alias
 (defstate ^:global base-state 1)
 
-(defalias ^:global base-alias flux.other-ns/other-fn)
+(defalias ^:global base-alias relay.other-ns/other-fn)
 
-(defalias ^{:global base-renamed-alias} other-alias flux.other-ns/other-fn)
+(defalias ^{:global base-renamed-alias} other-alias relay.other-ns/other-fn)
 
 (defmacro ^:global ^{:definition-symbol {:path [0] :type :variable}} defbase [var value]
   `(def ~var ~value))

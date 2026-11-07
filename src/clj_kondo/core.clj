@@ -194,14 +194,14 @@
                  :deferred-conditions (atom [])
                  :namespaces (atom {})
                  ;; the first namespace of each analyzed file, see
-                 ;; clj-kondo.impl.flux/merge-file-contributions
+                 ;; clj-kondo.impl.relay/merge-file-contributions
                  :top-namespaces (atom #{})
                  ;; calls that define a var if what they call is a macro that
-                 ;; says so, see clj-kondo.impl.flux/register-definitions
-                 :flux-definition-candidates (atom [])
+                 ;; says so, see clj-kondo.impl.relay/register-definitions
+                 :relay-definition-candidates (atom [])
                  ;; what a call of a global is analyzed as, see
-                 ;; clj-kondo.impl.flux/global-var
-                 :flux-global-vars (delay (core-impl/flux-global-vars cache-dir lint))
+                 ;; clj-kondo.impl.relay/global-var
+                 :relay-global-vars (delay (core-impl/relay-global-vars cache-dir lint))
                  :analysis analysis
                  :cache-dir cache-dir
                  :used-namespaces used-nss
@@ -262,7 +262,7 @@
                     (l/lint-var-usage ctx idacs)
                     (l/lint-deferred-conditions! ctx idacs)
                     (l/lint-unused-namespaces! ctx idacs)
-                    (l/lint-flux-globals! ctx idacs)
+                    (l/lint-relay-globals! ctx idacs)
                     (l/lint-unused-private-vars! ctx)
                     (l/lint-bindings! ctx)
                     (l/lint-unresolved-symbols! ctx)

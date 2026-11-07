@@ -45,7 +45,7 @@
 
 ;; not dependencies: a nested require, an :as-alias, and what after! requires
 (do (require 'lib.nested)
-    (require 'flux.other-ns))
+    (require 'relay.other-ns))
 
 (defn nested [x]
   (nested-fn x)

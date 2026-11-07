@@ -1,13 +1,13 @@
 (ns app
-  (:require [flux.string :as str]))
+  (:require [relay.string :as str]))
 
-;; what every namespace refers of flux.core and flux.builtins
+;; what every namespace refers of relay.core and relay.builtins
 (defn greet [name]
   (message (str "hello " name) *buffer*)
   (keepv inc [1 2])
   (ignore-errors (str/trim name) (str/trimr name)))
 
-;; a name of clojure.core that Flux lacks, a name nothing has, and a private var of flux.core
+;; a name of clojure.core that Relay lacks, a name nothing has, and a private var of relay.core
 (defn missing [x]
   (println x)
   (frobnicate x)
@@ -15,9 +15,9 @@
 
 ;; qualified names of loaded namespaces need no require
 (defn qualified [x]
-  (flux.builtins/message x)
-  (flux.other-ns/other-fn x)
-  (flux.other-ns/other-private x)
+  (relay.builtins/message x)
+  (relay.other-ns/other-fn x)
+  (relay.other-ns/other-private x)
   (nowhere.ns/thing x))
 
 ;; the error type of a catch clause is not evaluated
@@ -43,7 +43,7 @@
   [later-state handler-name])
 
 ;; forms that are evaluated later, and var references, can name what the file defines below
-(after! [flux.other-ns :as other]
+(after! [relay.other-ns :as other]
   (other/other-fn (below-fn 1)))
 
 (on-reload!
@@ -54,13 +54,13 @@
 (defn below-fn [x]
   x)
 
-;; special forms of Flux's own
+;; special forms of Relay's own
 (defn locked [buffer]
   (with-read-lock [lock buffer]
     (set-local! *buffer* lock)
     (message lock)))
 
-;; collections changed in place, a vector called with a default, and an escape Flux keeps
+;; collections changed in place, a vector called with a default, and an escape Relay keeps
 (defn in-place [t]
   (conj! t 1)
   ([1 2 3] 9 :default)
