@@ -362,21 +362,70 @@
                owners
                owners)))
 
+(defn code-text
+  "The Relay source `text` with what is not code left out: strings and regex
+  literals, each of which becomes a space, comments, of which the line break
+  stays, and the character after a backslash, which a character literal such as
+  `\\\"` or `\\;` is. A pattern that looks for code in it finds none in a
+  string of a test's fixture or in a comment that shows an example."
+  [^String text]
+  (let [n (.length text)
+        sb (StringBuilder. n)]
+    (loop [i 0
+           state :code]
+      (if (>= i n)
+        (str sb)
+        (let [c (.charAt text i)]
+          (case state
+            :code (case c
+                    \" (do (.append sb \space) (recur (inc i) :string))
+                    \; (recur (inc i) :comment)
+                    \\ (do (.append sb \space) (recur (+ i 2) :code))
+                    (do (.append sb c) (recur (inc i) :code)))
+            :string (case c
+                      \\ (recur (+ i 2) :string)
+                      \" (recur (inc i) :code)
+                      (recur (inc i) :string))
+            :comment (if (= \newline c)
+                       (do (.append sb c) (recur (inc i) :code))
+                       (recur (inc i) :comment))))))))
+
 (defn scan-global-vars
   "The globals that the Relay source `text` defines in its namespace, as a map
   from global name to [namespace var], or nil. This reads the text, in place of
   analyzing it, so that what a call of a global is analyzed as is known before
   any file of a run is analyzed: only the name of the var matters, for its hooks
-  and its :lint-as, and a tag in a comment names nothing that is called."
+  and its :lint-as. It reads the code alone (`code-text`): a tag in a string, a
+  regex or a comment names no global, nor does an `ns` form in a string name
+  the namespace, and `^{:global false}` and `^{:global nil}` register nothing."
   [text]
-  (when-let [tags (seq (re-seq #"\^(?::global|\{[^{}]*:global\s+(true|[^\s{}]+)[^{}]*\})\s+([^\s()\[\]{}]+)"
-                               text))]
-    (when-let [[_ ns-name] (re-find #"\(ns\s+([^\s()]+)" text)]
-      (into {}
-            (map (fn [[_ tag var-name]]
-                   [(symbol (if (or (nil? tag) (= "true" tag)) var-name tag))
-                    [(symbol ns-name) (symbol var-name)]]))
-            tags))))
+  (let [code (code-text text)]
+    (when-let [tags (seq (re-seq #"\^(?::global|\{[^{}]*:global\s+(true|[^\s{}]+)[^{}]*\})\s+([^\s()\[\]{}]+)"
+                                 code))]
+      (when-let [[_ ns-name] (re-find #"\(ns\s+([^\s()]+)" code)]
+        (into {}
+              (keep (fn [[_ tag var-name]]
+                      (when-not (contains? #{"false" "nil"} tag)
+                        [(symbol (if (or (nil? tag) (= "true" tag)) var-name tag))
+                         [(symbol ns-name) (symbol var-name)]])))
+              tags)))))
+
+(defn scanned-global-vars
+  "The var of each global that the Relay source texts `texts` define, as a map
+  from global name to [namespace var], by `scan-global-vars`. Where two of them
+  define one name, which `:relay/duplicate-global` reports, the first var in the
+  order of namespace and name is the one, as `global-vars` takes it from the
+  cache, whatever the order of the texts."
+  [texts]
+  (reduce (fn [vars scanned]
+            (reduce-kv (fn [vars global owner]
+                         (if (some-> (get vars global) (compare owner) neg?)
+                           vars
+                           (assoc vars global owner)))
+                       vars
+                       scanned))
+          {}
+          (keep scan-global-vars texts)))
 
 (defn global-vars
   "The var of each global of `index`, as a map from global name to

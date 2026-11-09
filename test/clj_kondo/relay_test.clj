@@ -6,6 +6,7 @@
   (:require
    [babashka.fs :as fs]
    [clj-kondo.core :as clj-kondo]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.test-utils :refer [assert-submaps2 lint!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
@@ -263,6 +264,33 @@
       (fs/with-temp-dir [cache-dir {}]
         (is (= [] (filterv #(= "hooks.rly" (first %))
                            (apply findings-of cache-dir config (conj globals-lib file)))))))))
+
+(deftest tags-outside-of-code-test
+  (let [texts (globals-file "src" "app" "texts.rly")
+        hooks (globals-file "src" "app" "hooks.rly")
+        config (assoc globals-config
+                      :lint-as {'lib.hooked/with-binding 'clojure.core/let
+                                'lib.hooked/renamed-binding 'clojure.core/let})]
+    (testing "the look through a file's text for tags reads its code alone: a string, a
+  regex, a comment and a character literal hold none"
+      (is (= '{texts-value [app.texts texts-value]
+               texts-after-semicolon [app.texts texts-after-semicolon]
+               texts-renamed [app.texts texts-other-name]}
+             (relay/scan-global-vars (slurp texts)))))
+    (testing "so a file that shows the tag of another namespace's global in a string or a
+  comment changes nothing of what a call of the global is analyzed as, whichever file the
+  run reads first"
+      (doseq [paths [(conj globals-lib hooks texts) (into [texts hooks] globals-lib)]]
+        (fs/with-temp-dir [cache-dir {}]
+          (is (= [] (filterv #(= "hooks.rly" (first %))
+                             (apply findings-of cache-dir config paths)))
+              (str (mapv fs/file-name paths))))))
+    (testing "where two texts tag one name, the first var by namespace is the one,
+  whatever their order"
+      (let [a "(ns lib.a)\n(defmacro ^:global shared [] nil)\n"
+            b "(ns lib.b)\n(defmacro ^:global shared [] nil)\n"]
+        (is (= '{shared [lib.a shared]} (relay/scanned-global-vars [a b])))
+        (is (= '{shared [lib.a shared]} (relay/scanned-global-vars [b a])))))))
 
 (deftest duplicate-global-test
   (with-globals-cache

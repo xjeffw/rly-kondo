@@ -640,10 +640,8 @@
   the cache says, overridden by what the files of `paths`, which the run is about
   to read, say now. See clj-kondo.impl.relay/global-var."
   [cache-dir paths]
-  (reduce (fn [vars file]
-            (into vars (relay/scan-global-vars (slurp file))))
-          (relay/global-vars (cache/read-relay-index cache-dir))
-          (relay-sources paths)))
+  (into (relay/global-vars (cache/read-relay-index cache-dir))
+        (relay/scanned-global-vars (map slurp (relay-sources paths)))))
 
 ;;;; index defs and calls by language and namespace
 

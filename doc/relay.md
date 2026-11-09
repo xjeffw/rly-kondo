@@ -70,7 +70,9 @@ A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under
 - **Calls.** A call of a global is analyzed as a call of its var: its hooks, `:lint-as` and
   `:config-in-call` apply, by the var's name. So that this needs no earlier run, a run first
   looks through the text of the Relay files it was given for such tags, and otherwise goes by the
-  cache.
+  cache. That look reads the code alone, so a tag that a string, a regex or a comment shows, as a
+  test's fixture or an example does, defines nothing, and where two files of the run tag one
+  name, the var of the first namespace by name is the one, as among the cached globals.
 - **Usage.** A global counts as a use of each direct dependency that has its namespace in its
   tree, so `:unused-namespace` does not report a require that exists for its globals.
 - **User namespaces.** `user`, which is where a file without an `ns` form is, sees every global

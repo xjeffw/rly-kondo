@@ -1,0 +1,19 @@
+(ns app.texts)
+
+;; A tag in a comment, as an example shows one, defines no global:
+;; (defmacro ^:global with-binding [binding & body])
+
+(def fixture
+  "(ns lib.hooked)\n\n(defmacro ^:global with-binding [binding & body])\n")
+
+(def pattern #"(?x) ^:global with-binding [(]")
+
+(def quote-char \")
+
+(def ^:global texts-value 1)
+
+(def semicolon \;) (def ^:global texts-after-semicolon 2)
+
+(def ^{:global texts-renamed} texts-other-name 3)
+
+(def ^{:global false} texts-no-global 4)
