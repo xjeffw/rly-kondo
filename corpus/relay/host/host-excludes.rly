@@ -1,0 +1,6 @@
+(ns host-excludes
+  (:refer-clojure :exclude [host-fn]))
+
+;; a name of host.core that the namespace excludes
+(defn excluded [x]
+  (host-fn x))

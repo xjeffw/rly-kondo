@@ -6,6 +6,7 @@
   (:require
    [babashka.fs :as fs]
    [clj-kondo.core :as clj-kondo]
+   [clj-kondo.impl.config :as config]
    [clj-kondo.impl.relay :as relay]
    [clj-kondo.test-utils :refer [assert-submaps2 lint!]]
    [clojure.java.io :as io]
@@ -140,6 +141,84 @@
           (assert-submaps2
            [{:file (str core) :row 6 :col 8 :message "Unused private var relay.core/unused"}]
            (lint! order config)))))))
+
+;;;; the auto-used namespaces
+
+(def host (io/file "corpus" "relay" "host"))
+
+(def host-core (io/file host "host" "core.rly"))
+
+(def host-app (io/file host "host-app.rly"))
+
+(def host-config
+  (assoc config :relay {:auto-use '[relay.core relay.builtins host.core]}))
+
+(def host-findings
+  '({:file "corpus/relay/host/host-app.rly" :row 6 :col 3 :level :warning
+     :message "Unused value"}
+    {:file "corpus/relay/host/host-excludes.rly" :row 6 :col 4 :level :error
+     :message "Unresolved symbol: host-fn"}))
+
+(deftest auto-used-namespaces-test
+  (testing "every namespace refers the vars of the namespaces that the configuration
+  auto-uses, a namesake of clojure.core is analyzed as the Clojure var, a qualified name
+  needs no require, and :refer-clojure excludes a name"
+    (assert-submaps2 host-findings (lint! [lib host] host-config)))
+  (testing "without the key, they are relay.core and relay.builtins"
+    (is (= '[relay.core relay.builtins] (relay/auto-used-namespaces config)))
+    (assert-submaps2
+     '({:file "corpus/relay/host/host-app.rly" :row 5 :col 4 :message "Unresolved symbol: host-fn"}
+       {:file "corpus/relay/host/host-app.rly" :row 6 :col 4 :message "Unresolved symbol: assoc"}
+       {:file "corpus/relay/host/host-excludes.rly" :row 6 :col 4 :message "Unresolved symbol: host-fn"})
+     (lint! [lib host] config)))
+  (testing "nothing is said about an unqualified name while an auto-used namespace is
+  unknown, and its qualified names are not of an unresolved namespace"
+    (assert-submaps2 [] (lint! [lib host-app] host-config))
+    (assert-submaps2
+     '({:row 5 :col 4 :message "Unresolved symbol: host-fn"}
+       {:row 6 :col 4 :message "Unresolved symbol: assoc"}
+       {:row 7 :col 4 :message "Unresolved namespace host.core. Are you missing a require?"})
+     (lint! [lib host-app] config)))
+  (testing "a later configuration's list replaces an earlier one's"
+    (is (= '[relay.core]
+           (relay/auto-used-namespaces
+            (config/merge-config! host-config {:relay {:auto-use '[relay.core]}}))))
+    (is (= ["Unresolved symbol: host-fn" "Unresolved symbol: assoc" "Unresolved symbol: host-fn"]
+           (->> (clj-kondo/run! {:lint (map str [lib host])
+                                 :cache false
+                                 :config [host-config {:relay {:auto-use relay/default-auto-use}}]})
+                :findings
+                (map :message))))))
+
+(deftest cached-auto-used-namespace-test
+  (testing "a namespace is linted against a cached auto-used namespace, in a run of its
+  own and in a parallel one"
+    (fs/with-temp-dir [cache-dir {}]
+      (clj-kondo/run! {:lint (map str [lib host-core])
+                       :cache-dir (str cache-dir)
+                       :dependencies true
+                       :config [host-config]})
+      (doseq [parallel [false true]]
+        (is (= (map (juxt :row :message) host-findings)
+               (->> (clj-kondo/run! {:lint (map str [host-app (io/file host "host-excludes.rly")])
+                                     :cache-dir (str cache-dir)
+                                     :parallel parallel
+                                     :config [host-config]})
+                    :findings
+                    (sort-by (juxt :filename :row :col))
+                    (map (juxt :row :message))))
+            (str "parallel " parallel))))))
+
+(def base (io/file "corpus" "relay" "base"))
+
+(deftest special-forms-namespace-test
+  (testing "the special forms are those of the first auto-used namespace, whichever it is:
+  a deferred form can name what the file defines below, with-read-lock binds, and *ns* is
+  the runtime's; relay.core, later in the list, is referred as the others are"
+    (assert-submaps2
+     []
+     (lint! [base (io/file lib "relay" "builtins.rly") (io/file lib "relay" "other-ns.rly")]
+            (assoc config :relay {:auto-use '[base.core relay.core relay.builtins]})))))
 
 ;;;; global vars
 

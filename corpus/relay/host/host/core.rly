@@ -1,0 +1,11 @@
+;; A namespace that a host auto-uses after Relay's own, `{:relay {:auto-use [relay.core
+;; relay.builtins host.core]}}`: it refers them as every namespace does.
+(ns host.core)
+
+(defn host-fn [x]
+  (inc x))
+
+;; a namesake of clojure.core, which is analyzed as the Clojure var
+(defn assoc [m k v]
+  (message (str k v))
+  m)

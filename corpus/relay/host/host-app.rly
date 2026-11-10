@@ -1,0 +1,8 @@
+(ns host-app)
+
+;; what every namespace refers of host.core when the host auto-uses it, unqualified and qualified
+(defn uses [m]
+  (host-fn 1)
+  (assoc m :key 1)
+  (host.core/host-fn 2)
+  m)

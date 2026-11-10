@@ -273,7 +273,11 @@
                    (contains? (:linters cfg) :if)
                    (assoc-in [:linters :missing-else-branch] (:if (:linters cfg)))
                    (contains? (:linters cfg) :type-mismatch)
-                   (update-in [:linters :type-mismatch] dissoc :namespaces))]
+                   (update-in [:linters :type-mismatch] dissoc :namespaces)
+                   ;; Relay's auto-used namespaces are one ordered list: a
+                   ;; configuration that names them names them all
+                   (coll? (get-in cfg [:relay :auto-use]))
+                   (update-in [:relay :auto-use] vary-meta assoc :replace true))]
          (deep-merge cfg* cfg))))
   ([cfg* cfg & cfgs]
    (reduce merge-config! cfg* (cons cfg cfgs))))

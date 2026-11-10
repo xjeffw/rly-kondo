@@ -291,8 +291,8 @@
                                                 :clj 'clojure.core
                                                 :cljs 'cljs.core)]
                                   (when (and (not= ns-sym core-ns)
-                                             ;; a Relay namespace refers relay.core
-                                             ;; and relay.builtins in its place
+                                             ;; a Relay namespace refers the auto-used
+                                             ;; namespaces in its place
                                              (not (:relay? ctx))
                                              (not (contains? (:clojure-excluded ns) var-sym))
                                              (var-info/core-sym? lang var-sym))
@@ -950,7 +950,7 @@
                         (reg-used-alias! ctx ns-name name-sym)
                         {:ns ns*
                          :name name-sym}))
-                    (let [referred-all-ns (or (relay/implicit-refer-ns ns name-sym)
+                    (let [referred-all-ns (or (relay/implicit-refer-ns (:config ctx) ns name-sym)
                                               (some (fn [[k {:keys [excluded]}]]
                                                       (when-not (contains? excluded name-sym)
                                                         k))

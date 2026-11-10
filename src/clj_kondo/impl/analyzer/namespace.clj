@@ -672,8 +672,8 @@
                                          (zipmap only only))))]
             {:referred-globals refer-globals}))
         _ (when (and (seq (:clojure-excluded refer-clj))
-                     ;; a Relay namespace excludes vars of relay.core and
-                     ;; relay.builtins, which are known once the cache is read
+                     ;; a Relay namespace excludes vars of the auto-used
+                     ;; namespaces, which are known once the cache is read
                      (not (:relay? ctx)))
             (lint-refer-clojure-vars ctx (:clojure-excluded refer-clj)))
         gen-class? (some #(= :gen-class (some-> % :children first :k)) clauses)
@@ -703,7 +703,7 @@
              (identical? :cljs lang) (update :qualify-ns
                                              #(assoc % 'cljs.core 'cljs.core
                                                      'clojure.core 'cljs.core))
-             (:relay? ctx) (-> (relay/with-implicit-refers filename)
+             (:relay? ctx) (-> (relay/with-implicit-refers filename merged-config)
                               (relay/with-dependencies (:top-ns ctx)
                                 (:required analyzed-require-clauses))))]
     (when (:analysis ctx)

@@ -807,7 +807,7 @@
                                       (assoc 'cljs.core 'cljs.core
                                              'clojure.core 'cljs.core)))))
         ns (if (and ns (:relay? ctx))
-             (relay/with-implicit-refers ns (:filename ctx))
+             (relay/with-implicit-refers ns (:filename ctx) (:config ctx))
              ns)]
     (namespace/reg-namespace! ctx ns)
     (analyze-children ctx (next children))
@@ -3836,10 +3836,10 @@
                          [[ns n]
                           (config/lint-as config resolved-var-sym)]
                           [ns n true])
-                        ;; relay.core defines the macros and declares the
-                        ;; special forms that Relay has in common with Clojure
+                        ;; the auto-used namespaces define the macros and declare
+                        ;; the special forms that Relay has in common with Clojure
                         (when (:relay? ctx)
-                          (when-let [[ns n] (relay/lint-as resolved-namespace resolved-name)]
+                          (when-let [[ns n] (relay/lint-as (:config ctx) resolved-namespace resolved-name)]
                             [ns n true]))
                         [resolved-namespace resolved-name false])
                     ;; See #1170, we deliberaly use resolved and not resolved-as
@@ -4001,7 +4001,7 @@
                                 (swap! candidates conj candidate))))
                         analyzed
                         (if-let [deferred (when (:relay? ctx)
-                                            (relay/deferred-form resolved-namespace resolved-name))]
+                                            (relay/deferred-form (:config ctx) resolved-namespace resolved-name))]
                           (analyze-relay-deferred ctx expr deferred)
                           (analyze-known-call ctx expr children config ns-name lang base-lang resolved-as-clojure-var-name resolved-as-namespace resolved-as-name lint-as? resolved-namespace resolved-name top-level? defined-by defined-by->lint-as unresolved?))]
                     (if (= 'ns resolved-as-clojure-var-name)

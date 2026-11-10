@@ -1,0 +1,14 @@
+;; The core namespace of a runtime, which is not relay.core, `{:relay {:auto-use [base.core
+;; relay.core relay.builtins]}}`: it declares the special forms.
+(ns base.core)
+
+(def ^:special-form def nil)
+(def ^:special-form defn nil)
+(def ^:special-form defn- nil)
+(def ^:special-form declare nil)
+(def ^:special-form fn nil)
+(def ^:special-form let nil)
+(def ^:special-form ns nil)
+(def ^:special-form after! nil)
+(def ^:special-form on-reload! nil)
+(def ^:special-form with-read-lock nil)

@@ -4,11 +4,14 @@
   A Relay file is analyzed as Clojure (`:lang :clj`) with `:relay?` set in the
   ctx and in each namespace it declares. The differences:
 
-  - Every namespace refers the public vars of `relay.core` and `relay.builtins`,
-    as if by `(:use relay.core relay.builtins)`, minus the names its
-    `:refer-clojure` clause excludes. These two namespaces take the place of
+  - Every namespace refers the public vars of the auto-used namespaces, in
+    order, as if by `(:use ...)` of each, minus the names its `:refer-clojure`
+    clause excludes; the first that has a name is the one. An auto-used
+    namespace refers the others. These namespaces take the place of
     `clojure.core`: an unqualified name is a var of them or it does not resolve.
-    Relay declares its special forms as vars of `relay.core` too.
+    The runtime declares its special forms as vars of the first of them. The
+    configuration names them, in order, as `{:relay {:auto-use [...]}}`, which
+    is `relay.core` and `relay.builtins` without it (`auto-used-namespaces`).
   - A qualified name resolves in any loaded namespace, required or not.
   - `^:private` keeps a var out of what other namespaces refer implicitly, and
     nothing else.
@@ -33,13 +36,31 @@
 
 (set! *warn-on-reflection* true)
 
-(def core-ns 'relay.core)
+(def default-auto-use
+  "The auto-used namespaces of a configuration that names none."
+  '[relay.core relay.builtins])
 
-(def builtins-ns 'relay.builtins)
+(defn auto-used-namespaces
+  "The namespaces that every Relay namespace refers, in the order they are
+  searched, as the configuration `config` names them under `:relay :auto-use`:
+  the first of them declares the special forms. Without that key, relay.core
+  and relay.builtins."
+  [config]
+  (let [names (-> config :relay :auto-use)]
+    (cond (vector? names) names
+          (sequential? names) (vec names)
+          :else default-auto-use)))
 
-(def implicit-namespaces
-  "The namespaces every Relay namespace refers, in the order they are searched."
-  [core-ns builtins-ns])
+(defn- special-forms-ns
+  "The namespace of the special forms among the auto-used namespaces
+  `auto-use`: the first."
+  [auto-use]
+  (first auto-use))
+
+(defn- auto-used?
+  "True when `ns-sym` is one of the auto-used namespaces `auto-use`."
+  [auto-use ns-sym]
+  (boolean (some #(= ns-sym %) auto-use)))
 
 (def global-ns
   "The pseudo-namespace that every Relay namespace uses implicitly: `global/name`
@@ -99,8 +120,8 @@
 
 (defn implicit-refer-alls
   "The :refer-alls entries of the namespaces that the Relay namespace `ns-name`
-  refers without saying so."
-  [ns-name excluded filename]
+  refers without saying so: the auto-used namespaces `auto-use`, but for itself."
+  [auto-use ns-name excluded filename]
   (into {}
         (comp (remove #{ns-name})
               (map (fn [implicit-ns]
@@ -108,7 +129,7 @@
                                    :implicit true
                                    :referred #{}
                                    :filename filename}])))
-        implicit-namespaces))
+        auto-use))
 
 (defn dependencies
   "The namespaces that a namespace depends on through the required namespaces
@@ -132,15 +153,17 @@
 
 (defn with-implicit-refers
   "Marks the namespace map `ns` as a Relay namespace and adds what it refers
-  implicitly."
-  [ns filename]
-  (let [refer-alls (implicit-refer-alls (:name ns) (:clojure-excluded ns) filename)]
+  implicitly, the auto-used namespaces that `config`, the configuration of the
+  namespace, names."
+  [ns filename config]
+  (let [auto-use (auto-used-namespaces config)
+        refer-alls (implicit-refer-alls auto-use (:name ns) (:clojure-excluded ns) filename)]
     (-> ns
         (assoc :relay? true)
         ;; always loaded, so their qualified names need no require
         (update :qualify-ns #(reduce (fn [m n] (assoc m n n))
                                      %
-                                     (conj implicit-namespaces global-ns)))
+                                     (conj auto-use global-ns)))
         (update :refer-alls #(merge refer-alls %))
         (update :used-namespaces (fnil into #{}) (keys refer-alls)))))
 
@@ -152,16 +175,18 @@
 
 (defn implicit-refer-ns
   "The namespace an unqualified, otherwise unresolved name is taken to come
-  from in the Relay namespace `ns`. Whether a var of that name exists there, or
-  in another referred namespace, is known once the cache is read."
-  [ns name-sym]
+  from in the Relay namespace `ns`, analyzed with the configuration `config`:
+  the first auto-used namespace it refers that does not exclude the name.
+  Whether a var of that name exists there, or in another referred namespace,
+  is known once the cache is read."
+  [config ns name-sym]
   (when (:relay? ns)
     (some (fn [implicit-ns]
             (when-let [refer-all (get (:refer-alls ns) implicit-ns)]
               (when (and (:implicit refer-all)
                          (not (contains? (:excluded refer-all) name-sym)))
                 implicit-ns)))
-          implicit-namespaces)))
+          (auto-used-namespaces config))))
 
 ;;;; names Relay shares with Clojure
 
@@ -179,13 +204,14 @@
 
 (defn clojure-namesake
   "The clojure.core name of the var `name-sym` of the namespace `ns-sym`, when
-  that is one of the namespaces Relay refers implicitly and Clojure has a var
-  of that name. Such a var is analyzed and linted as the Clojure one: it has
-  the same syntax and, unless listed otherwise, takes the same arguments."
-  [ns-sym name-sym]
-  (when (and (or (= core-ns ns-sym) (= builtins-ns ns-sym))
-             (symbol? name-sym)
-             (clojure-name? name-sym))
+  that is one of the auto-used namespaces of the configuration `config` and
+  Clojure has a var of that name. Such a var is analyzed and linted as the
+  Clojure one: it has the same syntax and, unless listed otherwise, takes the
+  same arguments."
+  [config ns-sym name-sym]
+  (when (and (symbol? name-sym)
+             (clojure-name? name-sym)
+             (auto-used? (auto-used-namespaces config) ns-sym))
     name-sym))
 
 (def ^:private special-forms-as
@@ -195,32 +221,45 @@
     set-local! set!
     future* future})
 
+(defn- special-form-ns?
+  "True when `ns-sym` is the namespace of the special forms of the configuration
+  `config`."
+  [config ns-sym]
+  (let [special-ns (special-forms-ns (auto-used-namespaces config))]
+    (and (some? special-ns) (= special-ns ns-sym))))
+
 (defn lint-as
   "The clojure.core var that a call of the var `name-sym` of `ns-sym` is
-  analyzed as, as [ns name]: its namesake, or the form a special form of
-  Relay's own has the syntax of."
-  [ns-sym name-sym]
-  (when-let [n (or (clojure-namesake ns-sym name-sym)
-                   (when (= core-ns ns-sym)
+  analyzed as, as [ns name], with the configuration `config`: its namesake, or
+  the form a special form of Relay's own has the syntax of."
+  [config ns-sym name-sym]
+  (when-let [n (or (clojure-namesake config ns-sym name-sym)
+                   (when (special-form-ns? config ns-sym)
                      (get special-forms-as name-sym)))]
     ['clojure.core n]))
 
+(def ^:private deferred-forms
+  '{after! after!, on-reload! on-reload!})
+
 (defn deferred-form
-  "The special form that the var `name-sym` of `ns-sym` is, when it is one that
-  keeps its body for later: after!, which evaluates it once the namespace of
-  its libspec is loaded, or on-reload!, which evaluates it when its file is
-  reloaded."
-  [ns-sym name-sym]
-  (when (= core-ns ns-sym)
-    (get '{after! after!, on-reload! on-reload!} name-sym)))
+  "The special form that the var `name-sym` of `ns-sym` is, with the
+  configuration `config`, when it is one that keeps its body for later: after!,
+  which evaluates it once the namespace of its libspec is loaded, or
+  on-reload!, which evaluates it when its file is reloaded."
+  [config ns-sym name-sym]
+  (when (contains? deferred-forms name-sym)
+    (when (special-form-ns? config ns-sym)
+      (get deferred-forms name-sym))))
 
 (defn deferred-usage?
-  "True when `usage` is in the body of a form that is evaluated later than the
-  file it is in: it can name a var the file defines further down."
+  "True when `usage`, or the ctx of an analysis, is in the body of a form that
+  is evaluated later than the file it is in: it can name a var the file
+  defines further down."
   [usage]
-  (boolean (some (fn [[ns-sym name-sym]]
-                   (deferred-form ns-sym name-sym))
-                 (:callstack usage))))
+  (let [config (:config usage)]
+    (boolean (some (fn [[ns-sym name-sym]]
+                     (deferred-form config ns-sym name-sym))
+                   (:callstack usage)))))
 
 (def in-place-vars
   "The vars that change a transient collection in place, so that their value
@@ -229,10 +268,11 @@
 
 (defn as-clojure-var
   "The var `called-fn` for the linters that know Clojure's vars by name: under
-  the namespace clojure.core when it is the namesake of one of them."
-  [called-fn]
+  the namespace clojure.core when it is the namesake of one of them, with the
+  configuration `config`."
+  [config called-fn]
   (let [name-sym (:name called-fn)]
-    (if (and (clojure-namesake (:ns called-fn) name-sym)
+    (if (and (clojure-namesake config (:ns called-fn) name-sym)
              (not (contains? untyped-vars name-sym)))
       (assoc called-fn :ns 'clojure.core)
       called-fn)))
@@ -240,10 +280,10 @@
 ;;;; resolving what a namespace refers implicitly
 
 (defn implicit-namespaces-known?
-  "True when the namespaces Relay refers implicitly were linted, in this run or
-  in one that cached them. Only then is a name they lack known not to resolve."
-  [idacs]
-  (every? #(get-in idacs [:clj :defs %]) implicit-namespaces))
+  "True when the auto-used namespaces `auto-use` were linted, in this run or in
+  one that cached them. Only then is a name they lack known not to resolve."
+  [idacs auto-use]
+  (every? #(get-in idacs [:clj :defs %]) auto-use))
 
 (defn- defined-before?
   "True unless `var-info` is defined in the file of `usage` and after it. The
@@ -274,17 +314,17 @@
 
 (defn- resolve-referred-var
   "The var named `name-sym` among those the namespace of `usage` refers without
-  naming them: the public vars of the namespaces every Relay namespace refers,
-  then those of the ones it uses, minus what it excludes."
-  [idacs usage name-sym refer-alls]
+  naming them: the public vars of the auto-used namespaces `auto-use`, in
+  order, then those of the ones it uses, minus what it excludes."
+  [idacs usage name-sym refer-alls auto-use]
   (some (fn [referred-ns]
           (when-not (contains? (:excluded (get refer-alls referred-ns)) name-sym)
             (when-let [var-info (get-in idacs [:clj :defs referred-ns name-sym])]
               (when (or (not (:private var-info))
                         (= referred-ns (:ns usage)))
                 var-info))))
-        (concat (filter #(contains? refer-alls %) implicit-namespaces)
-                (remove (set implicit-namespaces) (keys refer-alls)))))
+        (concat (filter #(contains? refer-alls %) auto-use)
+                (remove (set auto-use) (keys refer-alls)))))
 
 ;;;; global vars
 
@@ -561,7 +601,8 @@
       owner)))
 
 (def ^:private runtime-vars
-  "The vars of relay.core that the runtime defines and no file declares."
+  "The vars of the namespace of the special forms that the runtime defines and
+  no file declares."
   '#{*ns*})
 
 (def ^:private analysis-names
@@ -593,18 +634,21 @@
 
 (defn resolve-unqualified-var
   "The var that `usage` of the unqualified `name-sym` refers to: one of its own
-  namespace, else one of a namespace it refers, `refer-alls`. Returns :unknown
-  when no namespace has it and it is unknown whether one should."
+  namespace, else one of a namespace it refers, `refer-alls`, the auto-used
+  namespaces of the configuration of `usage` first. Returns :unknown when no
+  namespace has it and it is unknown whether one should."
   [idacs usage name-sym refer-alls]
-  (or (resolve-own-var idacs usage name-sym)
-      (resolve-referred-var idacs usage name-sym refer-alls)
-      (when (contains? runtime-vars name-sym)
-        {:ns core-ns :name name-sym})
-      (resolve-global-var idacs usage name-sym)
-      (when (or (contains? analysis-names name-sym)
-                (:clj-kondo.impl/generated (:expr usage))
-                (not (implicit-namespaces-known? idacs)))
-        :unknown)))
+  (let [auto-use (auto-used-namespaces (:config usage))]
+    (or (resolve-own-var idacs usage name-sym)
+        (resolve-referred-var idacs usage name-sym refer-alls auto-use)
+        (when (contains? runtime-vars name-sym)
+          (when-let [special-ns (special-forms-ns auto-use)]
+            {:ns special-ns :name name-sym}))
+        (resolve-global-var idacs usage name-sym)
+        (when (or (contains? analysis-names name-sym)
+                  (:clj-kondo.impl/generated (:expr usage))
+                  (not (implicit-namespaces-known? idacs auto-use)))
+          :unknown))))
 
 ;;;; namespaces defined in several files
 
@@ -713,8 +757,9 @@
   calls is known: should that be a macro with :definition-symbol metadata, the
   call defines a var. Of the arguments, the symbols at the paths such metadata
   uses are kept: an argument, or an element of an argument that is a vector
-  or a list."
-  [{:keys [ns top-ns filename]} expr call-info sexpr]
+  or a list. The candidate keeps the auto-used namespaces of the configuration,
+  where an unresolved name of the call is looked up."
+  [{:keys [ns top-ns filename config]} expr call-info sexpr]
   (let [skeleton (mapv (fn [node]
                          (or (symbol-entry node sexpr)
                              (when (contains? #{:vector :list} (:tag node))
@@ -726,14 +771,15 @@
              {:ns (:name ns)
               :top-ns top-ns
               :filename filename
+              :auto-use (auto-used-namespaces config)
               :skeleton skeleton}))))
 
 (defn- candidate-callee
-  [idacs {:keys [ns resolved-ns name unresolved?]}]
+  [idacs {:keys [ns resolved-ns name unresolved? auto-use]}]
   (or (get-in idacs [:clj :defs resolved-ns name])
       (when unresolved?
         (or (get-in idacs [:clj :defs ns name])
-            (some #(get-in idacs [:clj :defs % name]) implicit-namespaces)))
+            (some #(get-in idacs [:clj :defs % name]) auto-use)))
       (when (or unresolved? (= global-ns resolved-ns))
         (when-let [[owner-ns var-name] (first (get (:relay-owners idacs) name))]
           (get-in idacs [:clj :defs owner-ns var-name])))))

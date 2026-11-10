@@ -178,7 +178,7 @@
                      (format "%s with single key" called-name)))))))
 
 (defn lint-specific-calls! [ctx call called-fn]
-  (let [called-fn (relay/as-clojure-var called-fn)
+  (let [called-fn (relay/as-clojure-var (:config call) called-fn)
         called-ns (:ns called-fn)
         called-name (:name called-fn)
         config (:config call)
@@ -242,7 +242,7 @@
 
 (defn lint-arg-types! [ctx idacs call called-fn]
   (when-let [arg-types (:arg-types call)]
-    (let [called-fn (relay/as-clojure-var called-fn)
+    (let [called-fn (relay/as-clojure-var (:config call) called-fn)
           arg-types @arg-types
           tags (map #(tu/resolve-arg-type idacs %) arg-types)]
       (types/lint-arg-types ctx called-fn arg-types tags call)
@@ -405,10 +405,10 @@
 
 (defn reg-unused-value!
   [ctx call called-fn config call-config filename row end-row col end-col]
-  (when-let [idx (when-not (and (relay/clojure-namesake (:ns called-fn) (:name called-fn))
+  (when-let [idx (when-not (and (relay/clojure-namesake (:config call) (:ns called-fn) (:name called-fn))
                                 (contains? relay/in-place-vars (:name called-fn)))
                    (:idx call))]
-    (let [called-fn (relay/as-clojure-var called-fn)
+    (let [called-fn (relay/as-clojure-var (:config call) called-fn)
           normalized-sym (symbol (let [cns (str (:ns called-fn))]
                                    (if (= "cljs.core" cns) "clojure.core" cns))
                                  (str (:name called-fn)))]
@@ -669,7 +669,7 @@
     (reg-deprecated-var! ctx call called-fn recursive? fn-sym fn-ns fn-name caller-ns-sym in-def filename row end-row col end-col)
     (reg-redundant-fn-wrapper! ctx call called-fn filename)
     (reg-redundant-call! ctx call called-fn call-config
-                         (if-let [n (relay/clojure-namesake resolved-ns call-fn-name)]
+                         (if-let [n (relay/clojure-namesake (:config call) resolved-ns call-fn-name)]
                            (symbol "clojure.core" (str n))
                            fn-sym)
                          filename row end-row col end-col)
@@ -701,8 +701,8 @@
         end-col (:end-col call)
         ;; _ (prn :used (:used-namespaces idacs))
         #_#__ (prn (keys (:defs (:clj idacs))))
-        ;; in a Relay namespace, relay.core and relay.builtins take the place
-        ;; of clojure.core, and an unqualified name is one the namespace
+        ;; in a Relay namespace, the auto-used namespaces take the place of
+        ;; clojure.core, and an unqualified name is one the namespace
         ;; defines or refers, or a global it sees, as global/name is
         relay-global? (and (:relay? caller-ns) (relay/global-usage? call))
         relay-unqualified? (and (:relay? caller-ns) (relay/unqualified-usage? call))

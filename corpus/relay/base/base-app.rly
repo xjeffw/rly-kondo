@@ -1,0 +1,16 @@
+(ns base-app)
+
+;; the special forms of the runtime's core namespace: a form that is evaluated later can name
+;; what the file defines below, and with-read-lock binds as let
+(after! [relay.other-ns :as other]
+  (other/other-fn (below-fn 1)))
+
+(on-reload!
+  (below-fn 2))
+
+(defn locked [buffer]
+  (with-read-lock [lock buffer]
+    (message (relay-fn lock) *ns*)))
+
+(defn below-fn [x]
+  x)

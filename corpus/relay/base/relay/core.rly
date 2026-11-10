@@ -1,0 +1,6 @@
+;; Relay's own core namespace, which a host auto-uses after the runtime's: it declares no
+;; special form.
+(ns relay.core)
+
+(defn relay-fn [x]
+  x)
