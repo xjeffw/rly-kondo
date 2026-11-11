@@ -63,12 +63,28 @@
      (lint! app config))))
 
 (deftest package-test
-  (testing "the description of a package is data, and the namespace of a test
-  is named after its file under test/"
+  (testing "the description of a package is data, and the namespace of a file
+  under lib/ or of a test under test/ is named after its file"
     (assert-submaps2
-     '({:file "corpus/relay/pkg/test/pkg/misnamed.rly" :row 1 :col 5 :level :error
+     '({:file "corpus/relay/pkg/lib/pkg/misnamed.rly" :row 1 :col 5 :level :error
+        :message "Namespace name does not match file name: relay.pkg.other-name"}
+       {:file "corpus/relay/pkg/test/pkg/misnamed.rly" :row 1 :col 5 :level :error
         :message "Namespace name does not match file name: pkg.tests.other-name"})
      (lint! [lib pkg] config))))
+
+(deftest package-file-names-test
+  (testing "a package keeps its namespaces in lib/, those that the relay prefix
+  was added to among them, and its tests in test/"
+    (is (relay/file-names-namespace? "packages.pkg.lib.pkg.core" 'pkg.core))
+    (is (relay/file-names-namespace? "packages.pkg.lib.pkg.extra" 'relay.pkg.extra))
+    (is (relay/file-names-namespace? "packages.pkg.test.pkg.core" 'pkg.tests.core))
+    (is (relay/file-names-namespace? "packages.pkg.test.pkg.core" 'relay.tests.pkg.core))
+    (is (not (relay/file-names-namespace? "packages.pkg.lib.pkg.extra" 'relay.pkg.other)))
+    (is (not (relay/file-names-namespace? "packages.pkg.doc.pkg.extra" 'relay.pkg.extra))))
+  (testing "a package that keeps its Lisp in src/, which Relay reads for a
+  transition, has its namespaces there"
+    (is (relay/file-names-namespace? "packages.pkg.src.pkg.extra" 'relay.pkg.extra))
+    (is (relay/file-names-namespace? "packages.pkg.src.pkg.core" 'pkg.core))))
 
 (deftest clojure-file-test
   (testing "a Clojure file is linted as before"

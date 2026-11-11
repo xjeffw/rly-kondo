@@ -1,0 +1,4 @@
+(ns pkg.core)
+
+(defn greeting []
+  (str "hello"))

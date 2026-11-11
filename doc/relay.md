@@ -51,8 +51,10 @@ languages are linted as clj-kondo lints them.
 - **Smaller differences.** `^:private` does not keep another namespace from a var. A string
   keeps an escape the reader does not know. A vector takes an index and a default. `conj!` and
   its like change their collection in place, so their value can go unused. A file is named
-  after its namespace as written, and a package keeps `P.tests.X` in `test/P/X.rly`. A
-  `package.rly` that holds one map is data.
+  after its namespace as written, and a package keeps `relay.P.X` in `lib/P/X.rly` and
+  `P.tests.X` in `test/P/X.rly`. A package that keeps its Lisp in `src/`, which Relay reads
+  for a transition, has `relay.P.X` in `src/P/X.rly`. A `package.rly` that holds one map is
+  data.
 
 ## Global vars
 

@@ -106,7 +106,9 @@
   "True when the file at `path`, given without its extension and with dots for
   its separators, is where Relay looks for the namespace `ns-name`: under the
   name of the namespace or, in a package, under `test` for a namespace of its
-  tests and under `src` for one that the `relay` prefix was added to."
+  tests and under `lib` for one that the `relay` prefix was added to. A package
+  that keeps its Lisp in `src`, where Relay still reads it for a transition, has
+  such a namespace there."
   [path ns-name]
   (let [parts (str/split (str ns-name) #"\.")
         relay? (= "relay" (first parts))
@@ -119,7 +121,7 @@
              (and relay? (<= 4 (count parts)) (= "tests" (second parts)))
              (conj (suffix "test" (drop 2 parts)))
              (and relay? (<= 3 (count parts)))
-             (conj (suffix "src" (rest parts))))))))
+             (into [(suffix "lib" (rest parts)) (suffix "src" (rest parts))]))))))
 
 (defn implicit-refer-alls
   "The :refer-alls entries of the namespaces that the Relay namespace `ns-name`
