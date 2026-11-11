@@ -36,6 +36,12 @@ languages are linted as clj-kondo lints them.
   `{:path [0] :type :variable}` for the first argument, `{:path [0 1] :type :function}` for the
   second element of the first. The var is known once the macro is, so a call needs no
   `:lint-as`.
+- **Aliases.** `(defalias name target)`, where `defalias` is the var of the first auto-used
+  namespace, makes `name` a second name of the var that `target` names, as Relay's
+  `alias-var!` does. A call of the alias, in its namespace, through it from another or as the
+  global it registers, is linted as a call of that var, its arity included, as a var that
+  potemkin's `import-vars` imports is. The target is a usage of its var, and a target that does
+  not resolve leaves the alias a var of its own.
 - **Special forms.** These are the vars of the first auto-used namespace that have the names
   below. `(catch type name body...)` leaves `type` unevaluated. `with-read-lock` and
   `with-write-lock` bind as `let`, `set-local!` is `set!`, `future*` is `future`.
@@ -56,7 +62,7 @@ A var with `:global` metadata is a global: `(defn ^:global add-hook! ...)` under
 
 - **Definitions.** The metadata is read from a name of the `def` family (the forms that are
   analyzed as `def`, `defn` or `defmacro`, a `:lint-as` to one of them included), of `declare`,
-  and of the macros with `:definition-symbol`, which covers `defalias`. The symbol of
+  and of the macros with `:definition-symbol`, and of `defalias`. The symbol of
   `^{:global name}` is not evaluated, so it is not linted as a usage. A var that registers
   itself some other way, with `alter-meta!` at runtime, is not known.
 - **Dependencies.** A namespace's dependencies are what its `ns` form's `:require` and `:use`

@@ -232,14 +232,18 @@
     (and (some? special-ns) (= special-ns ns-sym))))
 
 (defn lint-as
-  "The clojure.core var that a call of the var `name-sym` of `ns-sym` is
-  analyzed as, as [ns name], with the configuration `config`: its namesake, or
-  the form a special form of Relay's own has the syntax of."
+  "The var that a call of the var `name-sym` of `ns-sym` is analyzed as, as
+  [ns name], with the configuration `config`: its clojure.core namesake, the
+  clojure.core form that a special form of Relay's own has the syntax of, or
+  clj-kondo.relay/defalias for the language's `defalias`, which the namespace
+  of the special forms defines (see `alias-definition`)."
   [config ns-sym name-sym]
-  (when-let [n (or (clojure-namesake config ns-sym name-sym)
-                   (when (special-form-ns? config ns-sym)
-                     (get special-forms-as name-sym)))]
-    ['clojure.core n]))
+  (if-let [n (or (clojure-namesake config ns-sym name-sym)
+                 (when (special-form-ns? config ns-sym)
+                   (get special-forms-as name-sym)))]
+    ['clojure.core n]
+    (when (and (= 'defalias name-sym) (special-form-ns? config ns-sym))
+      ['clj-kondo.relay 'defalias])))
 
 (def ^:private deferred-forms
   '{after! after!, on-reload! on-reload!})
@@ -847,6 +851,20 @@
                 idacs)))
           idacs
           (:relay-definition-candidates idacs)))
+
+;;;; aliases
+
+(defn alias-definition
+  "What the call `expr` of the language's `defalias`, `(defalias name target)`,
+  defines: `name` in the namespace of the call, as a second name of the var
+  that the symbol `target` names. Returns the name as `definition-candidate`
+  keeps it, with the metadata written on it, and the node of the target, or
+  nil when the call has another shape."
+  [expr sexpr]
+  (let [[name-node target-node & more] (rest (:children expr))
+        entry (some-> name-node (symbol-entry sexpr))]
+    (when (and entry (symbol? (:value target-node)) (empty? more))
+      {:entry entry :target-node target-node})))
 
 ;;;; strings
 

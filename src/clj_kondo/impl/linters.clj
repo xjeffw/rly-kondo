@@ -684,6 +684,17 @@
       (reg-unused-value! ctx call called-fn config call-config
                          filename row end-row col end-col))))
 
+(defn- relay-imported-var
+  "The var that `relay-var`, which a Relay name resolved to without
+  `utils/resolve-call`, stands for when it is an alias that `defalias` defines:
+  the var of its target, else `relay-var` itself."
+  [idacs call call-lang relay-var refer-alls]
+  (if-let [imported-ns (:imported-ns relay-var)]
+    (or (utils/resolve-call idacs call call-lang imported-ns (:imported-var relay-var)
+                            false refer-alls)
+        relay-var)
+    relay-var))
+
 (defn lint-resolved-call!
   [ctx idacs config namespaces linted-namespaces base-lang call call? unresolved? in-comment]
   (let [call-fn-name (:name call)
@@ -711,7 +722,8 @@
                        relay-unqualified?
                        (relay/resolve-unqualified-var idacs call call-fn-name refer-alls))
         called-fn (if (or relay-global? relay-unqualified?)
-                    (when-not (identical? :unknown relay-var) relay-var)
+                    (when-not (identical? :unknown relay-var)
+                      (relay-imported-var idacs call call-lang relay-var refer-alls))
                     (utils/resolve-call idacs call call-lang
                                         resolved-ns call-fn-name unresolved? refer-alls))
         called-fn (utils/prefer-comment-def call called-fn)

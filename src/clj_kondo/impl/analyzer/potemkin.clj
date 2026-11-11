@@ -4,6 +4,7 @@
   (:require
    [clj-kondo.impl.analyzer.common :as common]
    [clj-kondo.impl.namespace :as namespace]
+   [clj-kondo.impl.relay :as relay]
    [clj-kondo.impl.utils :as utils :refer [token-node]]))
 
 (defn analyze-import-fn
@@ -90,3 +91,33 @@
                                                                         :defined-by defined-by
                                                                         :defined-by->lint-as defined-by->lint-as}))))
                  imported-ns)))}]))
+
+(defn analyze-defalias
+  "Analyzes Relay's `(defalias name target)`, which makes `name`, in the
+  namespace of the call, the var that `target` names, as import-fn does with
+  its arguments the other way round: a call of the alias, from this namespace
+  or through it, is linted as a call of that var. The target is a usage of its
+  var. A target that does not resolve here leaves the alias a var of its own."
+  [ctx expr defined-by defined-by->lint-as]
+  (let [ns-name (-> ctx :ns :name)]
+    (if-let [{:keys [entry target-node]} (relay/alias-definition expr utils/sexpr)]
+      (let [target (:value target-node)
+            _ (common/analyze-usages2 ctx target-node)
+            resolved (namespace/resolve-name ctx false ns-name target target-node)
+            imported-ns (when-not (:unresolved? resolved) (:ns resolved))
+            imported-var (when imported-ns (:name resolved))]
+        (namespace/reg-var! ctx ns-name (:name entry) expr
+                            (cond-> {:name-row (:row entry)
+                                     :name-col (:col entry)
+                                     :name-end-row (:end-row entry)
+                                     :name-end-col (:end-col entry)
+                                     :defined-by defined-by
+                                     :defined-by->lint-as defined-by->lint-as}
+                              (:private entry) (assoc :private true)
+                              (:global entry) (assoc :global (:global entry))
+                              imported-var (assoc :imported-ns imported-ns
+                                                  :imported-var imported-var)))
+        (when (and imported-var (not= ns-name imported-ns))
+          [{:type :import-vars
+            :used-namespaces [imported-ns]}]))
+      (common/analyze-children ctx (rest (:children expr))))))

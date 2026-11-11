@@ -3518,6 +3518,8 @@
     (potemkin/analyze-import-fn ctx expr utils/ctx-with-linters-disabled
                                defined-by
                                defined-by->lint-as)
+    [clj-kondo.relay defalias]
+    (potemkin/analyze-defalias ctx expr defined-by defined-by->lint-as)
     ([clojure.core.async alt!] [clojure.core.async alt!!]
      [cljs.core.async alt!] [cljs.core.async alt!!])
     (core-async/analyze-alt!
@@ -3585,8 +3587,8 @@
     (analyze-spec-ns-call ctx expr children resolved-as-namespace resolved-as-name resolved-namespace resolved-name defined-by defined-by->lint-as unresolved?)
     re-frame.core
     (analyze-re-frame-ns-call ctx expr children resolved-as-namespace resolved-as-name resolved-namespace resolved-name unresolved?)
-    (clj-kondo.lint-as schema.core clojure.core.match cljs.core.match clojure.string
-     potemkin clojure.core.async cljs.core.async clojure.core.reducers clojure.template
+    (clj-kondo.lint-as clj-kondo.relay schema.core clojure.core.match cljs.core.match
+     clojure.string potemkin clojure.core.async cljs.core.async clojure.core.reducers clojure.template
      clojure.core cljs.core datahike.api datascript.core datomic.api datomic.client.api
      datalevin.core datomic-type-extensions.api compojure.core clojure.java.jdbc
      next.jdbc clojure.tools.logging clojure.data.xml clojure.data.xml.impl

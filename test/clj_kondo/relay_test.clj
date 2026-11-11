@@ -403,6 +403,51 @@
                (findings-of cache-dir globals-config
                             (globals-file "src" "app" "duplicate.rly"))))))))
 
+;;;; aliases
+
+(def alias-files
+  {"target.rly" "(ns lib.target)\n\n(defn join [sep coll]\n  [sep coll])\n"
+   "aliases.rly" (str "(ns lib.aliases\n  (:require [lib.target :as target]))\n\n"
+                      "(defalias join target/join)\n"
+                      "(defalias ^:global global-join target/join)\n"
+                      "(defalias own join)\n\n"
+                      "(join 1)\n"
+                      "(own 1 2 3)\n")
+   "app.rly" (str "(ns app.aliases\n  (:require [lib.aliases :as aliases]))\n\n"
+                  "(aliases/join 1 2)\n"
+                  "(aliases/join 1)\n"
+                  "(global-join 1 2 3)\n"
+                  "(aliases/own)\n")})
+
+(deftest alias-test
+  (testing "a name that defalias defines is linted as the var it stands for: called in its
+  namespace, through that namespace, as a global and through another alias, in a run and
+  from the cache"
+    (fs/with-temp-dir [dir {}]
+      (doseq [[name text] alias-files]
+        (spit (fs/file dir name) text))
+      (let [[target aliases app] (map #(fs/file dir %) ["target.rly" "aliases.rly" "app.rly"])
+            expected [["aliases.rly" 8 "lib.target/join is called with 1 arg but expects 2"]
+                      ["aliases.rly" 9 "lib.target/join is called with 3 args but expects 2"]
+                      ["app.rly" 5 "lib.target/join is called with 1 arg but expects 2"]
+                      ["app.rly" 6 "lib.target/join is called with 3 args but expects 2"]
+                      ["app.rly" 7 "lib.target/join is called with 0 args but expects 2"]]]
+        (is (= expected
+               (->> (clj-kondo/run! {:lint (map str [lib target aliases app])
+                                     :cache false
+                                     :config [globals-config]})
+                    :findings
+                    (map (juxt #(fs/file-name (:filename %)) :row :message))
+                    sort
+                    vec)))
+        (fs/with-temp-dir [cache-dir {}]
+          (clj-kondo/run! {:lint (map str [lib target aliases])
+                           :cache-dir (str cache-dir)
+                           :dependencies true
+                           :config [globals-config]})
+          (is (= (filterv #(= "app.rly" (first %)) expected)
+                 (findings-of cache-dir globals-config app))))))))
+
 (deftest user-namespace-test
   (with-globals-cache
     (fn [cache-dir]
