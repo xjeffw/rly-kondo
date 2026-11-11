@@ -1,0 +1,8 @@
+;; The runtime's core namespace, the first auto-used namespace: the macros that define its vars.
+(ns lisp.core)
+
+(defmacro ^{:definition-symbol {:path [0] :type :variable}} defstate [var value]
+  `(defonce ~var ~value))
+
+(defmacro ^{:definition-symbol {:path [0] :type :variable}} defalias [name target]
+  `(alias-var! '~name (var ~target)))

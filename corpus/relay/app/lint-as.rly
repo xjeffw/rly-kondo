@@ -1,0 +1,5 @@
+(ns lint-as)
+
+;; a macro of relay.core, an auto-used namespace after the first, that binds names as `for` does
+(defn squares [xs]
+  (each-of [x xs] (inc x)))

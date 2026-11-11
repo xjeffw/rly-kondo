@@ -3795,9 +3795,10 @@
              resolved-core? :resolved-core?
              :as _m}
             (resolve-name ctx true ns-name full-fn-name expr)
-            ;; a Relay global is called by a name of its own, and analyzed as its var
-            [hook-namespace hook-name] (or (relay/global-var ctx full-fn-name
-                                                            resolved-namespace unresolved?)
+            ;; a Relay global is called by a name of its own, and analyzed as its var, and
+            ;; so is a var of an auto-used namespace that the configuration names
+            [hook-namespace hook-name] (or (relay/analyzed-var ctx full-fn-name resolved-namespace
+                                                               resolved-name unresolved?)
                                            [resolved-namespace resolved-name])
             expr-meta (meta expr)
             resolved-var-sym (symbol (str hook-namespace) (str hook-name))

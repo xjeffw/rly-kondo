@@ -1,0 +1,11 @@
+;; The functions the runtime implements, declared as Relay generates them.
+(ns lisp.builtins)
+
+(declare +)
+(declare alias-var!)
+(declare conj!)
+(declare in-ns)
+(declare inc)
+(declare require)
+(declare str)
+(declare transient)

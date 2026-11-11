@@ -1,12 +1,4 @@
-;; The functions the runtime implements, declared as Relay generates them.
+;; The functions the editor implements, declared as Relay generates them.
 (ns relay.builtins)
 
-(declare +)
-(declare alias-var!)
-(declare conj!)
-(declare in-ns)
-(declare inc)
 (declare message)
-(declare require)
-(declare str)
-(declare transient)

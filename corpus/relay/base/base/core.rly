@@ -1,4 +1,4 @@
-;; The core namespace of a runtime, which is not relay.core, `{:relay {:auto-use [base.core
+;; The core namespace of a runtime, which is not lisp.core, `{:relay {:auto-use [base.core
 ;; relay.core relay.builtins]}}`: it declares the special forms.
 (ns base.core)
 

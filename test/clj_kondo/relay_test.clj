@@ -12,8 +12,13 @@
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
 
+(def relay-auto-use
+  "The auto-used namespaces as Relay's configuration names them: the runtime's, then Relay's."
+  '[lisp.core lisp.builtins relay.core relay.builtins])
+
 (def config
-  {:linters {:unresolved-symbol {:level :error}
+  {:relay {:auto-use relay-auto-use}
+   :linters {:unresolved-symbol {:level :error}
              :unresolved-var {:level :warning}
              :unresolved-namespace {:level :warning}
              :unused-value {:level :warning}
@@ -43,14 +48,14 @@
      :message "Unresolved symbol: later-state"}))
 
 (deftest library-and-program-test
-  (testing "a program resolves what it refers of relay.core and relay.builtins,
-  the vars that macros define, qualified names of loaded namespaces, and what
+  (testing "a program resolves what it refers of the runtime's lisp.core and
+  lisp.builtins and of relay.core and relay.builtins, the vars that macros define, qualified names of loaded namespaces, and what
   forms evaluated later name; the library itself lints clean"
     (assert-submaps2 app-findings (lint! [lib app] config))))
 
 (deftest unknown-library-test
-  (testing "nothing is said about an unqualified name while relay.core and
-  relay.builtins are unknown"
+  (testing "nothing is said about an unqualified name while the auto-used namespaces
+  are unknown"
     (assert-submaps2
      '({:row 19 :col 4 :message "Unresolved namespace relay.other-ns. Are you missing a require?"}
        {:row 21 :col 4 :message "Unresolved namespace nowhere.ns. Are you missing a require?"}
@@ -109,12 +114,16 @@
                              target))
                          ["one" "two"])
             files (fn [name] (mapv #(str (io/file % "relay" name)) copies))
+            runtime (for [copy copies
+                          name ["core.rly" "builtins.rly" "builtins-extra.rly"]]
+                      (str (io/file copy "lisp" name)))
             expected (map #(select-keys % [:row :col :message]) app-findings)]
         (doseq [order [["builtins-extra.rly" "core.rly" "string.rly"]
                        ["core.rly" "builtins-extra.rly" "string.rly"]
                        ["core.rly" "string.rly" "builtins-extra.rly"]]]
           (fs/with-temp-dir [cache-dir {}]
-            (clj-kondo/run! {:lint (concat (mapcat files order)
+            (clj-kondo/run! {:lint (concat runtime
+                                           (mapcat files order)
                                            (files "builtins.rly")
                                            (files "other-ns.rly"))
                              :cache-dir (str cache-dir)
@@ -144,6 +153,18 @@
 
 ;;;; the auto-used namespaces
 
+(deftest configured-var-of-a-later-auto-used-namespace-test
+  (testing "a :lint-as or a hook that names a var of an auto-used namespace after the
+  first applies to its unqualified name, which resolves to the first one until the cache
+  is read"
+    (let [file (io/file "corpus" "relay" "app" "lint-as.rly")]
+      (assert-submaps2
+       '({:file "corpus/relay/app/lint-as.rly" :row 5 :col 13 :message "Unresolved symbol: x"})
+       (lint! [lib file] config))
+      (assert-submaps2
+       []
+       (lint! [lib file] (assoc config :lint-as '{relay.core/each-of clojure.core/for}))))))
+
 (def host (io/file "corpus" "relay" "host"))
 
 (def host-core (io/file host "host" "core.rly"))
@@ -151,7 +172,7 @@
 (def host-app (io/file host "host-app.rly"))
 
 (def host-config
-  (assoc config :relay {:auto-use '[relay.core relay.builtins host.core]}))
+  (assoc config :relay {:auto-use (conj relay-auto-use 'host.core)}))
 
 (def host-findings
   '({:file "corpus/relay/host/host-app.rly" :row 6 :col 3 :level :warning
@@ -164,8 +185,9 @@
   auto-uses, a namesake of clojure.core is analyzed as the Clojure var, a qualified name
   needs no require, and :refer-clojure excludes a name"
     (assert-submaps2 host-findings (lint! [lib host] host-config)))
-  (testing "without the key, they are relay.core and relay.builtins"
-    (is (= '[relay.core relay.builtins] (relay/auto-used-namespaces config)))
+  (testing "without the key, they are the runtime's lisp.core and lisp.builtins"
+    (is (= '[lisp.core lisp.builtins] (relay/auto-used-namespaces (dissoc config :relay))))
+    (is (= relay-auto-use (relay/auto-used-namespaces config)))
     (assert-submaps2
      '({:file "corpus/relay/host/host-app.rly" :row 5 :col 4 :message "Unresolved symbol: host-fn"}
        {:file "corpus/relay/host/host-app.rly" :row 6 :col 4 :message "Unresolved symbol: assoc"}
@@ -186,7 +208,7 @@
     (is (= ["Unresolved symbol: host-fn" "Unresolved symbol: assoc" "Unresolved symbol: host-fn"]
            (->> (clj-kondo/run! {:lint (map str [lib host])
                                  :cache false
-                                 :config [host-config {:relay {:auto-use relay/default-auto-use}}]})
+                                 :config [host-config {:relay {:auto-use relay-auto-use}}]})
                 :findings
                 (map :message))))))
 

@@ -1,5 +1,6 @@
-;; A namespace that a host auto-uses after Relay's own, `{:relay {:auto-use [relay.core
-;; relay.builtins host.core]}}`: it refers them as every namespace does.
+;; A namespace that a host auto-uses after the runtime's and Relay's, `{:relay {:auto-use
+;; [lisp.core lisp.builtins relay.core relay.builtins host.core]}}`: it refers them as every
+;; namespace does.
 (ns host.core)
 
 (defn host-fn [x]

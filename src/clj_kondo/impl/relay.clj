@@ -11,7 +11,9 @@
     `clojure.core`: an unqualified name is a var of them or it does not resolve.
     The runtime declares its special forms as vars of the first of them. The
     configuration names them, in order, as `{:relay {:auto-use [...]}}`, which
-    is `relay.core` and `relay.builtins` without it (`auto-used-namespaces`).
+    is the runtime's `lisp.core` and `lisp.builtins` without it
+    (`auto-used-namespaces`); Relay's configuration adds `relay.core` and
+    `relay.builtins`.
   - A qualified name resolves in any loaded namespace, required or not.
   - `^:private` keeps a var out of what other namespaces refer implicitly, and
     nothing else.
@@ -37,14 +39,15 @@
 (set! *warn-on-reflection* true)
 
 (def default-auto-use
-  "The auto-used namespaces of a configuration that names none."
-  '[relay.core relay.builtins])
+  "The auto-used namespaces of a configuration that names none: the runtime's,
+  which every host of Relay Lisp has."
+  '[lisp.core lisp.builtins])
 
 (defn auto-used-namespaces
   "The namespaces that every Relay namespace refers, in the order they are
   searched, as the configuration `config` names them under `:relay :auto-use`:
-  the first of them declares the special forms. Without that key, relay.core
-  and relay.builtins."
+  the first of them declares the special forms. Without that key, lisp.core
+  and lisp.builtins."
   [config]
   (let [names (-> config :relay :auto-use)]
     (cond (vector? names) names
@@ -476,6 +479,26 @@
              {}
              (global-owners index)))
 
+(defn configured-auto-used-var
+  "The var, as [namespace name], that a call of the unqualified `name-sym` is
+  analyzed as when the namespace refers it implicitly from `ns-sym`, the first
+  auto-used namespace of `config` that does not exclude it, and the
+  configuration puts a :lint-as or a hook on the var of that name of
+  `ns-sym` or of an auto-used namespace after it: the first that has one. Until
+  the cache is read, an implicit referral names the first auto-used namespace,
+  which need not be the one that defines the var, and a configuration names
+  the var where it is defined, as `relay.core/defmemo`."
+  [config ns-sym name-sym]
+  (let [auto-use (auto-used-namespaces config)]
+    (when (and (symbol? name-sym) (auto-used? auto-use ns-sym))
+      (some (fn [candidate]
+              (let [var-sym (symbol (str candidate) (str name-sym))]
+                (when (or (get-in config [:lint-as var-sym])
+                          (get-in config [:hooks :analyze-call var-sym])
+                          (get-in config [:hooks :macroexpand var-sym]))
+                  [candidate name-sym])))
+            (drop-while #(not= ns-sym %) auto-use)))))
+
 (defn global-var
   "The var, as [namespace name], that a call of the name `full-name`, resolved
   as `resolved-ns` and `unresolved?` say, is analyzed as when that is a global:
@@ -487,6 +510,16 @@
     (some-> (:relay-global-vars ctx)
             deref
             (get (symbol (name full-name))))))
+
+(defn analyzed-var
+  "The var, as [namespace name], that a call of `full-name`, resolved as
+  `resolved-ns`, `resolved-name` and `unresolved?` say, is analyzed as when it is
+  not the var it resolves to: a global (`global-var`), or a var of an auto-used
+  namespace that the configuration of `ctx` names (`configured-auto-used-var`)."
+  [ctx full-name resolved-ns resolved-name unresolved?]
+  (or (global-var ctx full-name resolved-ns unresolved?)
+      (when (and unresolved? (:relay? ctx))
+        (configured-auto-used-var (:config ctx) resolved-ns resolved-name))))
 
 (defn- user-namespace?
   "True for `user` and, with `config` saying so, for any namespace: a run for the

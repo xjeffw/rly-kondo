@@ -9,8 +9,8 @@ languages are linted as clj-kondo lints them.
 ## What a Relay file is linted as
 
 - **Implicit refers.** Every namespace refers the public vars of the auto-used namespaces, which
-  are `relay.core` and `relay.builtins` unless the configuration names others (see
-  "Configuration"), as if by a `(:use ...)` of each in their order, minus the names its
+  are the runtime's `lisp.core` and `lisp.builtins` unless the configuration names others (see
+  "Configuration"; Relay's adds `relay.core` and `relay.builtins`), as if by a `(:use ...)` of each in their order, minus the names its
   `:refer-clojure` clause excludes. Where two of them have a name, the first one's is the one.
   An auto-used namespace refers the others. These namespaces take the place of `clojure.core`:
   an unqualified name is a var of the namespace, of one it refers, or it is unresolved. A name
@@ -110,6 +110,9 @@ Relay Lisp has two keys of its own, under `:relay`:
 - `:auto-use`, the auto-used namespaces, in order: `{:relay {:auto-use [lisp.core lisp.builtins
   relay.core relay.builtins]}}`. The first is the namespace of the special forms. The list is
   the whole of them, so a configuration that names it replaces what an earlier one said, where
-  clj-kondo concatenates other vectors. Without the key, it is `[relay.core relay.builtins]`.
-  Relay's library configuration sets it to what `(auto-used-namespaces)` returns in Relay.
+  clj-kondo concatenates other vectors. Without the key, it is `[lisp.core lisp.builtins]`.
+  Relay's library configuration sets it to what `(auto-used-namespaces)` returns in Relay. A
+  `:lint-as` or a hook names a var of an auto-used namespace by the namespace that defines it,
+  as `relay.core/defmemo`, and applies to an unqualified call of the name, which the analysis
+  attributes to the first auto-used namespace until the cache says which one has it.
 - `:user-configuration`, see "User namespaces" above.
