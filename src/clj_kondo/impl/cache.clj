@@ -22,20 +22,27 @@
 (defn cache-file ^java.io.File [cache-dir lang ns-sym]
   (io/file cache-dir (name lang) (str ns-sym ".transit.json")))
 
+(defn- read-transit [resource]
+  (with-open [is (io/input-stream resource)]
+    (transit/read (transit/reader is :json))))
+
+(defn- from-disk-cache
+  "What the cache file of a namespace holds, or nil without one. A file that
+  does not read counts as none, as a truncated one that a run killed while it
+  wrote left before `to-cache` replaced files whole: the next run that analyzes
+  the namespace writes it again."
+  [cache-dir lang ns-sym]
+  (when cache-dir
+    (let [f (cache-file cache-dir lang ns-sym)]
+      (when (.exists f)
+        (try (read-transit f)
+             (catch Exception _ nil))))))
+
 (defn from-cache-1 [cache-dir lang ns-sym]
-  (when-let [{:keys [resource source]}
-             (or (when cache-dir
-                   (let [f (cache-file cache-dir lang ns-sym)]
-                     (when (.exists f)
-                       {:source :disk
-                        :resource f})))
-                 (when-let [resource (built-in-cache-resource lang ns-sym)]
-                   {:source :built-in
-                    :resource resource}))]
-    (assoc
-     (with-open [is (io/input-stream resource)]
-       (transit/read (transit/reader is :json)))
-     :source source)))
+  (if-let [data (from-disk-cache cache-dir lang ns-sym)]
+    (assoc data :source :disk)
+    (when-let [resource (built-in-cache-resource lang ns-sym)]
+      (assoc (read-transit resource) :source :built-in))))
 
 (defn skip-write?
   [^java.io.File config-dir ^String filename]
@@ -67,21 +74,39 @@
         (proxy-super flush)
         (proxy-super close)))))
 
+(defn- replace-file!
+  "Calls `write` with an output stream to a temporary file beside `file`, which
+  then replaces `file` in one step. A run killed meanwhile, as the Relay
+  language server kills a lint that an edit has made obsolete, leaves `file` as
+  it was, where writing it in place would leave it truncated and every later
+  run that reads it would fail. Runs that share a cache write to it one at a
+  time (`with-cache`), so the temporary file is the writer's alone."
+  [^java.io.File file write]
+  (let [temporary (io/file (str file ".tmp"))]
+    (io/make-parents file)
+    (try
+      (with-open [os (no-flush-output-stream (io/output-stream temporary))]
+        (write os))
+      (Files/move (.toPath temporary) (.toPath file)
+                  (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                          StandardCopyOption/REPLACE_EXISTING]))
+      (finally
+        (.delete temporary)))))
+
 (defn to-cache
   "Writes ns-data to cache-dir. Always use with `with-cache`."
   [config-dir cache-dir lang ns-sym ns-data]
   (let [filename (:filename ns-data)]
     (when-not (skip-write? config-dir filename)
-      (let [file (cache-file cache-dir lang ns-sym)
-            _ (io/make-parents file)
-            os (io/output-stream file)]
-        (with-open [os (no-flush-output-stream os)]
-          (let [writer (transit/writer os :json)]
-            (try (transit/write writer ns-data)
-                 (catch Exception e
-                   (binding [*out* *err*]
-                     (println "[clj-kondo] WARNING: could not serialize cache data for namespace" ns-sym))
-                   (throw e)))))))))
+      (replace-file!
+       (cache-file cache-dir lang ns-sym)
+       (fn [os]
+         (let [writer (transit/writer os :json)]
+           (try (transit/write writer ns-data)
+                (catch Exception e
+                  (binding [*out* *err*]
+                    (println "[clj-kondo] WARNING: could not serialize cache data for namespace" ns-sym))
+                  (throw e)))))))))
 
 (def ^:dynamic *lock-file-name* "lock")
 
@@ -163,14 +188,8 @@
           (transit/read (transit/reader is :json)))))))
 
 (defn- write-relay-index! [cache-dir index]
-  (let [file (relay-index-file cache-dir)
-        temporary (io/file (str file ".tmp"))]
-    (io/make-parents file)
-    (with-open [os (no-flush-output-stream (io/output-stream temporary))]
-      (transit/write (transit/writer os :json) index))
-    (Files/move (.toPath temporary) (.toPath file)
-                (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
-                                        StandardCopyOption/REPLACE_EXISTING]))))
+  (replace-file! (relay-index-file cache-dir)
+                 #(transit/write (transit/writer % :json) index)))
 
 (defn- with-relay-index
   "`idacs` with the index of the Relay namespaces: `cached`, with what this run

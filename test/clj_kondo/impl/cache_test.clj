@@ -203,6 +203,34 @@
   (is (not (cache/skip-write? (io/file ".clj-kondo") "/Users/foo/.m2/reposistory/foo.jar:hello.clj"))))
 
 
+(deftest replace-cache-file-test
+  (let [cache-dir (.toFile (java.nio.file.Files/createTempDirectory
+                            "clj-kondo-cache"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+        file (cache/cache-file cache-dir :clj 'foo)
+        files #(vec (.list (.getParentFile file)))]
+    (try
+      (cache/to-cache nil cache-dir :clj 'foo {'foo {:row 1}})
+      (testing "a write leaves its data and no temporary file"
+        (is (= {:row 1} (get (cache/from-cache-1 cache-dir :clj 'foo) 'foo)))
+        (is (= ["foo.transit.json"] (files))))
+      (testing "a write that stops partway, as a killed run's does, leaves the file as it was"
+        (let [before (slurp file)]
+          ;; The sequence throws once more than the buffers hold has reached the file.
+          (is (thrown? Exception
+                       (binding [*err* (java.io.StringWriter.)]
+                         (cache/to-cache nil cache-dir :clj 'foo
+                                         {'foo {:row 2
+                                                :items (map #(if (< % 20000) % (throw (ex-info "stop" {})))
+                                                            (range 30000))}}))))
+          (is (= before (slurp file)))
+          (is (= ["foo.transit.json"] (files)))))
+      (testing "a truncated file counts as none"
+        (spit file (subs (slurp file) 0 10))
+        (is (nil? (cache/from-cache-1 cache-dir :clj 'foo))))
+      (finally
+        (remove-dir (.getPath cache-dir))))))
+
 ;;;; Scratch
 
 (comment
